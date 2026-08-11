@@ -128,6 +128,51 @@ kbd {
   font-size: 21px;
 }
 
+.game-auth h2 {
+  margin: 0 0 14px;
+  font-size: 21px;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.auth-tabs button {
+  background: #282832;
+  color: #f4f0df;
+}
+
+.auth-tabs button.active {
+  background: #fff36e;
+  color: #141414;
+}
+
+.account-card {
+  display: grid;
+  gap: 8px;
+}
+
+.account-card strong {
+  font-size: 20px;
+}
+
+.account-card span {
+  width: fit-content;
+  border: 1px solid rgba(255, 243, 110, 0.34);
+  color: #ffe891;
+  padding: 4px 8px;
+  font-weight: 900;
+}
+
+.admin-jump {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .form {
   display: grid;
   gap: 10px;

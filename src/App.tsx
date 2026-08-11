@@ -15,7 +15,7 @@ type Zombie = {
   windupTimer: number;
   attackTarget: 'player' | 'cart' | null;
   parriedThisSwing: boolean;
-  kind: 'crawler' | 'runner' | 'brute' | 'boss';
+  kind: 'crawler' | 'runner' | 'brute' | 'shooter' | 'boss';
 };
 
 type Spark = {
@@ -27,12 +27,28 @@ type Spark = {
   color: string;
 };
 
+type Projectile = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  damage: number;
+  size: number;
+};
+
 const WIDTH = 960;
 const HEIGHT = 540;
 const GROUND = 405;
 const PLAYER_W = 42;
 const PLAYER_H = 74;
 const FINAL_ROOM = 25;
+const parryColors = [
+  { name: 'Gold', color: '#fff36e', cost: 0 },
+  { name: 'Toxic', color: '#80ff9e', cost: 3 },
+  { name: 'Neon', color: '#ff65d8', cost: 5 },
+  { name: 'Rift', color: '#57d5ff', cost: 7 },
+];
 
 const locations = [
   {
@@ -99,6 +115,7 @@ function isTypingTarget(target: EventTarget | null) {
 function zombieStats(kind: Zombie['kind'], room: number) {
   const roomBoost = Math.floor((room - 1) / 3);
   if (kind === 'boss') return { hp: 10 + Math.floor(room / 5) * 5, speed: 30 + room * 2 };
+  if (kind === 'shooter') return { hp: 2 + roomBoost, speed: 24 + room * 2 };
   if (kind === 'runner') return { hp: 2 + roomBoost, speed: 72 + room * 6 };
   if (kind === 'brute') return { hp: 5 + roomBoost, speed: 34 + room * 3 };
   return { hp: 3 + roomBoost, speed: 48 + room * 4 };
@@ -127,14 +144,14 @@ function spawnZombies(locationIndex: number, room: number): Zombie[] {
     const boss = createZombie('boss', 700, room, 0);
     const helperCount = Math.min(1 + Math.floor(room / 10), 3);
     const helpers = Array.from({ length: helperCount }, (_, index) => {
-      const kind: Zombie['kind'] = index % 2 === 0 ? 'runner' : 'crawler';
+      const kind: Zombie['kind'] = index % 2 === 0 ? 'shooter' : 'runner';
       return createZombie(kind, 520 + index * 120, room, index + 1);
     });
     return [boss, ...helpers];
   }
 
   const count = clamp(2 + Math.floor((room - 1) / 2), 2, 7);
-  const kinds: Zombie['kind'][] = ['crawler', 'runner', 'crawler', 'brute', 'runner', 'crawler', 'brute'];
+  const kinds: Zombie['kind'][] = ['crawler', 'runner', 'shooter', 'crawler', 'brute', 'runner', 'shooter'];
 
   return Array.from({ length: count }, (_, index) => {
     const kind = kinds[(index + room + locationIndex) % kinds.length];
@@ -153,6 +170,7 @@ export default function App() {
     player: { x: 170, y: GROUND - PLAYER_H, vx: 0, vy: 0, facing: 1, hp: 6, invuln: 0 },
     cart: { x: 78, y: GROUND - 45, vx: 0, hp: 8, maxHp: 8, invuln: 0 },
     zombies: spawnZombies(0, 1),
+    projectiles: [] as Projectile[],
     sparks: [] as Spark[],
     portalTimer: 0,
     location: 0,
@@ -161,6 +179,12 @@ export default function App() {
     parryCooldown: 0,
     hitStop: 0,
     won: false,
+    paused: true,
+    coins: 0,
+    radiusLevel: 0,
+    parryColor: parryColors[0].color,
+    unlockedColors: [parryColors[0].color],
+    roomRewarded: false,
     message: 'Комната 1. Защищай вагонетку и чисти путь.',
     messageTimer: 4,
   });
@@ -172,8 +196,46 @@ export default function App() {
     zombies: 2,
     boss: false,
     won: false,
+    coins: 0,
+    radiusLevel: 0,
+    parryColor: parryColors[0].color,
     message: 'Комната 1. Защищай вагонетку и чисти путь.',
   });
+  const [menu, setMenu] = useState<'main' | 'shop' | 'closed'>('main');
+
+  const startGame = () => {
+    gameRef.current.paused = false;
+    setMenu('closed');
+  };
+
+  const openMenu = () => {
+    gameRef.current.paused = true;
+    setMenu('main');
+  };
+
+  const buyRadius = () => {
+    const game = gameRef.current;
+    const cost = 4 + game.radiusLevel * 3;
+    if (game.radiusLevel >= 5 || game.coins < cost) return;
+    game.coins -= cost;
+    game.radiusLevel += 1;
+    game.message = `Радиус парирования +${game.radiusLevel}`;
+    game.messageTimer = 1.4;
+    setHud((current) => ({ ...current, coins: game.coins, radiusLevel: game.radiusLevel }));
+  };
+
+  const buyColor = (color: string, cost: number) => {
+    const game = gameRef.current;
+    if (!game.unlockedColors.includes(color)) {
+      if (game.coins < cost) return;
+      game.coins -= cost;
+      game.unlockedColors.push(color);
+    }
+    game.parryColor = color;
+    game.message = 'Цвет парирования выбран.';
+    game.messageTimer = 1.2;
+    setHud((current) => ({ ...current, coins: game.coins, parryColor: color }));
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -203,6 +265,7 @@ export default function App() {
 
     let frame = 0;
     let last = performance.now();
+    let visualTime = last;
 
     const addSparks = (x: number, y: number, color: string, count = 14) => {
       const game = gameRef.current;
@@ -235,6 +298,8 @@ export default function App() {
       game.cart.x = 40;
       game.cart.hp = Math.min(game.cart.maxHp, game.cart.hp + 2);
       game.zombies = spawnZombies(game.location, game.room);
+      game.projectiles = [];
+      game.roomRewarded = false;
       game.portalTimer = 0.7;
       game.message = game.room % 5 === 0 ? `БОСС ${game.room / 5}: ${locations[game.location].name}` : `Комната ${game.room}: ${locations[game.location].name}`;
       game.messageTimer = 2.8;
@@ -340,6 +405,7 @@ export default function App() {
 
     const drawCart = () => {
       const { player, cart } = gameRef.current;
+      const wheelSpin = cart.x * 0.12;
       ctx.strokeStyle = '#c7bca6';
       ctx.lineWidth = 5;
       ctx.beginPath();
@@ -361,17 +427,44 @@ export default function App() {
       ctx.arc(cart.x + 24, cart.y + 43, 14, 0, Math.PI * 2);
       ctx.arc(cart.x + 86, cart.y + 43, 14, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = '#8f94a3';
+      ctx.lineWidth = 3;
+      for (const wheelX of [cart.x + 24, cart.x + 86]) {
+        ctx.save();
+        ctx.translate(wheelX, cart.y + 43);
+        ctx.rotate(wheelSpin);
+        ctx.beginPath();
+        ctx.moveTo(-10, 0);
+        ctx.lineTo(10, 0);
+        ctx.moveTo(0, -10);
+        ctx.lineTo(0, 10);
+        ctx.stroke();
+        ctx.restore();
+      }
       ctx.fillStyle = '#9da7b7';
       ctx.fillRect(cart.x + 25, cart.y - 12, 42, 14);
     };
 
     const drawPlayer = () => {
-      const { player, parryTimer, parryCooldown } = gameRef.current;
+      const { player, parryTimer, parryCooldown, parryColor, radiusLevel } = gameRef.current;
+      const parryRadius = 48 + radiusLevel * 6;
       const cx = player.x + PLAYER_W / 2;
+      const running = Math.abs(player.vx) > 8 && player.y >= GROUND - PLAYER_H - 1;
+      const step = running ? Math.sin(frame * 0.34) : 0;
+      const bob = running ? Math.abs(step) * -3 : Math.sin(frame * 0.08) * 1.2;
+      const armSwing = running ? step * 7 : Math.sin(frame * 0.08) * 2;
       ctx.save();
-      ctx.translate(cx, player.y);
+      ctx.translate(cx, player.y + bob);
       ctx.scale(player.facing, 1);
       ctx.translate(-cx, -player.y);
+      ctx.strokeStyle = '#5eb9d8';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(player.x + 13, player.y + 31);
+      ctx.lineTo(player.x - 1, player.y + 40 + armSwing);
+      ctx.moveTo(player.x + 32, player.y + 31);
+      ctx.lineTo(player.x + 45, player.y + 39 - armSwing);
+      ctx.stroke();
       ctx.fillStyle = player.invuln > 0 ? '#ffeff8' : '#8fe0ff';
       ctx.fillRect(player.x + 9, player.y + 18, 25, 42);
       ctx.fillStyle = '#f2c28f';
@@ -379,27 +472,27 @@ export default function App() {
       ctx.fillStyle = '#24232a';
       ctx.fillRect(player.x + 8, player.y - 5, 29, 10);
       ctx.fillStyle = '#141419';
-      ctx.fillRect(player.x + 12, player.y + 60, 9, 14);
-      ctx.fillRect(player.x + 28, player.y + 60, 9, 14);
+      ctx.fillRect(player.x + 12, player.y + 60 + step * 4, 9, 14);
+      ctx.fillRect(player.x + 28, player.y + 60 - step * 4, 9, 14);
       ctx.fillStyle = '#d6f7ff';
       ctx.fillRect(player.x + 30, player.y + 9, 5, 5);
-      ctx.fillStyle = parryCooldown > 0 ? '#555967' : '#fff36e';
+      ctx.fillStyle = parryCooldown > 0 ? '#555967' : parryColor;
       ctx.fillRect(player.x + 36, player.y + 28, 11, 23);
       ctx.fillStyle = '#c8edf7';
       ctx.fillRect(player.x + 39, player.y + 31, 5, 17);
       ctx.restore();
 
       if (parryTimer > 0) {
-        ctx.strokeStyle = '#fff36e';
+        ctx.strokeStyle = parryColor;
         ctx.lineWidth = 4;
-        ctx.shadowColor = '#fff36e';
+        ctx.shadowColor = parryColor;
         ctx.shadowBlur = 20;
         ctx.beginPath();
-        ctx.arc(player.x + PLAYER_W / 2, player.y + 36, 48, 0, Math.PI * 2);
+        ctx.arc(player.x + PLAYER_W / 2, player.y + 36, parryRadius, 0, Math.PI * 2);
         ctx.stroke();
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(player.x + PLAYER_W / 2, player.y + 36, 30, 0, Math.PI * 2);
+        ctx.arc(player.x + PLAYER_W / 2, player.y + 36, Math.max(24, parryRadius - 18), 0, Math.PI * 2);
         ctx.stroke();
         ctx.shadowBlur = 0;
       }
@@ -429,15 +522,25 @@ export default function App() {
     const drawZombie = (zombie: Zombie) => {
       ctx.save();
       const wobble = Math.sin(frame * 0.12 + zombie.x * 0.05) * 4;
-      ctx.translate(zombie.x, zombie.y + wobble);
-      const scale = zombie.kind === 'boss' ? 1.82 : zombie.kind === 'brute' ? 1.22 : zombie.kind === 'runner' ? 0.86 : 1;
+      const walk = Math.sin(frame * (zombie.kind === 'runner' ? 0.48 : 0.22) + zombie.x * 0.04);
+      const windupLean = zombie.windupTimer > 0 ? Math.sin((1 - zombie.windupTimer) * 16) * 7 : 0;
+      ctx.translate(zombie.x + windupLean, zombie.y + wobble);
+      const scale = zombie.kind === 'boss' ? 1.82 : zombie.kind === 'brute' ? 1.22 : zombie.kind === 'runner' ? 0.86 : zombie.kind === 'shooter' ? 0.96 : 1;
       ctx.scale(scale, scale);
-      ctx.fillStyle = zombie.stunTimer > 0 ? '#dfff7c' : zombie.kind === 'boss' ? '#8b4759' : zombie.kind === 'runner' ? '#a6d58e' : zombie.kind === 'brute' ? '#78905d' : '#9bc47d';
-      ctx.fillRect(9, 10, 30, 39);
-      ctx.fillStyle = zombie.kind === 'boss' ? '#a94e67' : zombie.kind === 'brute' ? '#8ba36d' : '#a6d58e';
-      ctx.fillRect(10, -10, 27, 25);
+      ctx.translate(24, 20);
+      ctx.rotate(zombie.windupTimer > 0 ? Math.sin(frame * 0.3) * 0.08 : walk * 0.025);
+      ctx.translate(-24, -20);
+      ctx.fillStyle = zombie.stunTimer > 0 ? '#dfff7c' : zombie.kind === 'boss' ? '#8b4759' : zombie.kind === 'shooter' ? '#6f80c9' : zombie.kind === 'runner' ? '#a6d58e' : zombie.kind === 'brute' ? '#78905d' : '#9bc47d';
+      ctx.fillRect(9, 12, 30, 37);
+      ctx.fillStyle = zombie.kind === 'boss' ? '#a94e67' : zombie.kind === 'shooter' ? '#8798ef' : zombie.kind === 'brute' ? '#8ba36d' : '#a6d58e';
+      ctx.fillRect(11, -8, 25, 23);
       ctx.fillStyle = '#24331e';
       ctx.fillRect(18, -2, 6, 5);
+      if (zombie.kind === 'shooter') {
+        ctx.fillStyle = '#57d5ff';
+        ctx.fillRect(34, 20, 24, 8);
+        ctx.fillRect(52, 17, 7, 14);
+      }
       if (zombie.kind === 'boss') {
         ctx.fillStyle = '#fff36e';
         ctx.fillRect(9, -18, 8, 8);
@@ -448,16 +551,16 @@ export default function App() {
       ctx.fillStyle = '#522323';
       ctx.fillRect(29, 6, 10, 5);
       ctx.strokeStyle = '#6f8861';
-      ctx.lineWidth = 6;
+      ctx.lineWidth = zombie.kind === 'shooter' ? 4 : 6;
       ctx.beginPath();
       ctx.moveTo(11, 22);
-      ctx.lineTo(-7, 33);
+      ctx.lineTo(-7, 33 + walk * 5);
       ctx.moveTo(38, 24);
-      ctx.lineTo(55, 36);
+      ctx.lineTo(55 + (zombie.windupTimer > 0 ? 8 : 0), 36 - walk * 5);
       ctx.stroke();
       ctx.fillStyle = '#2c2b26';
-      ctx.fillRect(12, 48, 8, 12);
-      ctx.fillRect(31, 48, 8, 12);
+      ctx.fillRect(12, 48 + walk * 2, 8, 12);
+      ctx.fillRect(31, 48 - walk * 2, 8, 12);
       ctx.fillStyle = '#f35b5b';
       ctx.fillRect(8, -17, 33 * (zombie.hp / zombie.maxHp), 4);
       ctx.restore();
@@ -490,11 +593,43 @@ export default function App() {
       ctx.globalAlpha = 1;
     };
 
+    const drawProjectiles = () => {
+      for (const projectile of gameRef.current.projectiles) {
+        drawWarningStar(projectile.x, projectile.y, projectile.size, '#57d5ff');
+      }
+    };
+
+    const explodeProjectile = (x: number, y: number) => {
+      const game = gameRef.current;
+      const radius = 78;
+      let killed = 0;
+      for (const zombie of game.zombies) {
+        if (zombie.hp <= 0 || zombie.kind === 'boss') continue;
+        const zombieCenterX = zombie.x + (zombie.kind === 'brute' ? 30 : 24);
+        const zombieCenterY = zombie.y + 20;
+        const distance = Math.hypot(zombieCenterX - x, zombieCenterY - y);
+        if (distance <= radius) {
+          zombie.hp = 0;
+          zombie.stunTimer = 0.3;
+          killed += 1;
+          addSparks(zombieCenterX, zombieCenterY, game.parryColor, 18);
+        }
+      }
+      addSparks(x, y, game.parryColor, 46);
+      game.hitStop = Math.max(game.hitStop, 0.05);
+      game.message = killed > 0 ? `STAR BURST: ${killed} down` : 'STAR BURST';
+      game.messageTimer = 0.8;
+    };
+
     const update = (dt: number) => {
       const game = gameRef.current;
       const keys = keysRef.current;
       const p = game.player;
       const inputX = (keys.left ? -1 : 0) + (keys.right ? 1 : 0);
+
+      if (game.paused) {
+        return;
+      }
 
       if (game.won) {
         game.messageTimer = 99;
@@ -511,7 +646,7 @@ export default function App() {
         game.parryCooldown = 0.62;
         game.message = 'PARRY WINDOW';
         game.messageTimer = 0.45;
-        addSparks(p.x + PLAYER_W / 2, p.y + 34, '#fff36e', 10);
+        addSparks(p.x + PLAYER_W / 2, p.y + 34, game.parryColor, 10);
       }
 
       p.vx = inputX * 215;
@@ -553,7 +688,15 @@ export default function App() {
           const targetX = cartDistance < playerDistance ? cartCenter : p.x + PLAYER_W / 2;
           const direction = targetX > zombie.x ? 1 : -1;
           const speed = zombieStats(zombie.kind, game.room).speed;
-          zombie.vx = direction * speed;
+          const desiredDistance = zombie.kind === 'shooter' ? 310 : 0;
+          const distanceToTarget = Math.abs(targetX - zombie.x);
+          if (zombie.kind === 'shooter' && distanceToTarget < desiredDistance) {
+            zombie.vx = -direction * speed;
+          } else if (zombie.kind === 'shooter' && distanceToTarget < desiredDistance + 80) {
+            zombie.vx = 0;
+          } else {
+            zombie.vx = direction * speed;
+          }
           zombie.x += zombie.vx * dt;
         }
 
@@ -569,7 +712,35 @@ export default function App() {
         const canHitCart = rectsOverlap(cartBox, zombieBox);
         const canHitPlayer = rectsOverlap(playerBox, zombieBox);
 
-        if (zombie.hp > 0 && zombie.biteTimer <= 0 && zombie.windupTimer <= 0 && (canHitPlayer || canHitCart)) {
+        if (zombie.kind === 'shooter' && zombie.hp > 0 && zombie.biteTimer <= 0 && zombie.windupTimer <= 0) {
+          zombie.windupTimer = Math.max(0.36, 0.68 - game.room * 0.018);
+          zombie.attackTarget = game.cart.hp <= p.hp ? 'cart' : 'player';
+          zombie.parriedThisSwing = true;
+          zombie.biteTimer = 99;
+        }
+
+        if (zombie.kind === 'shooter' && zombie.hp > 0 && zombie.windupTimer <= 0 && zombie.attackTarget) {
+          const targetX = zombie.attackTarget === 'cart' ? game.cart.x + 56 : p.x + PLAYER_W / 2;
+          const targetY = zombie.attackTarget === 'cart' ? game.cart.y + 10 : p.y + 34;
+          const dx = targetX - (zombie.x + 34);
+          const dy = targetY - (zombie.y + 8);
+          const distance = Math.hypot(dx, dy) || 1;
+          const speed = 160 + game.room * 7;
+          game.projectiles.push({
+            x: zombie.x + 42,
+            y: zombie.y + 6,
+            vx: (dx / distance) * speed,
+            vy: (dy / distance) * speed,
+            life: 4,
+            damage: game.room >= 15 ? 2 : 1,
+            size: 11,
+          });
+          addSparks(zombie.x + 42, zombie.y + 6, '#57d5ff', 10);
+          zombie.attackTarget = null;
+          zombie.biteTimer = Math.max(0.9, 1.55 - game.room * 0.035);
+        }
+
+        if (zombie.kind !== 'shooter' && zombie.hp > 0 && zombie.biteTimer <= 0 && zombie.windupTimer <= 0 && (canHitPlayer || canHitCart)) {
           zombie.attackTarget = canHitCart && (!canHitPlayer || game.cart.hp <= p.hp) ? 'cart' : 'player';
           zombie.windupTimer = zombie.kind === 'boss' ? Math.max(0.42, 0.78 - game.room * 0.012) : Math.max(0.34, 0.62 - game.room * 0.025);
           zombie.parriedThisSwing = false;
@@ -577,7 +748,8 @@ export default function App() {
         }
 
         const targetBox = zombie.attackTarget === 'cart' ? cartBox : playerBox;
-        const parryRange = { x: p.x - 54, y: p.y - 8, w: PLAYER_W + 108, h: PLAYER_H + 24 };
+        const bonus = game.radiusLevel * 6;
+        const parryRange = { x: p.x - 54 - bonus, y: p.y - 8 - bonus, w: PLAYER_W + 108 + bonus * 2, h: PLAYER_H + 24 + bonus * 2 };
         if (zombie.kind === 'boss') {
           parryRange.x = p.x - 78;
           parryRange.y = p.y - 20;
@@ -603,7 +775,7 @@ export default function App() {
           game.hitStop = zombie.kind === 'boss' ? 0.075 : 0.055;
           game.message = zombie.hp <= 0 ? (zombie.kind === 'boss' ? 'BOSS PARRIED TO DEATH' : 'PERFECT PARRY: zombie down') : zombie.kind === 'boss' ? 'BOSS PARRY' : 'PERFECT PARRY';
           game.messageTimer = 0.9;
-          addSparks(zombie.x + (zombie.kind === 'boss' ? 52 : 24), zombie.y + 14, '#fff36e', zombie.kind === 'boss' ? 58 : 34);
+          addSparks(zombie.x + (zombie.kind === 'boss' ? 52 : 24), zombie.y + 14, game.parryColor, zombie.kind === 'boss' ? 58 : 34);
         }
 
         if (zombie.hp > 0 && zombie.windupTimer <= 0 && zombie.attackTarget && !zombie.parriedThisSwing) {
@@ -629,10 +801,68 @@ export default function App() {
         }
       }
 
+      const projectileParryBonus = game.radiusLevel * 3;
+      const projectileParryBox = {
+        x: p.x - 28 - projectileParryBonus,
+        y: p.y + 8 - projectileParryBonus,
+        w: PLAYER_W + 56 + projectileParryBonus * 2,
+        h: PLAYER_H - 4 + projectileParryBonus * 2,
+      };
+      const playerBox = { x: p.x, y: p.y, w: PLAYER_W, h: PLAYER_H };
+      const cartBox = { x: game.cart.x, y: game.cart.y - 22, w: 112, h: 70 };
+
+      game.projectiles = game.projectiles
+        .map((projectile) => ({
+          ...projectile,
+          x: projectile.x + projectile.vx * dt,
+          y: projectile.y + projectile.vy * dt,
+          life: projectile.life - dt,
+        }))
+        .filter((projectile) => {
+          const projectileBox = {
+            x: projectile.x - projectile.size,
+            y: projectile.y - projectile.size,
+            w: projectile.size * 2,
+            h: projectile.size * 2,
+          };
+
+          if (game.parryTimer > 0 && rectsOverlap(projectileParryBox, projectileBox)) {
+            explodeProjectile(projectile.x, projectile.y);
+            return false;
+          }
+
+          if (rectsOverlap(playerBox, projectileBox) && p.invuln <= 0) {
+            p.hp -= projectile.damage;
+            p.invuln = 0.75;
+            addSparks(projectile.x, projectile.y, '#ff5f6d', 16);
+            game.message = 'Звезда попала. Их тоже можно парировать.';
+            game.messageTimer = 1;
+            return false;
+          }
+
+          if (rectsOverlap(cartBox, projectileBox) && game.cart.invuln <= 0) {
+            game.cart.hp -= projectile.damage;
+            game.cart.invuln = 0.65;
+            addSparks(projectile.x, projectile.y, '#ff6b4f', 16);
+            game.message = 'Звезда ударила вагонетку.';
+            game.messageTimer = 1;
+            return false;
+          }
+
+          return projectile.life > 0 && projectile.x > -40 && projectile.x < WIDTH + 40 && projectile.y > -40 && projectile.y < HEIGHT + 40;
+        });
+
       game.zombies = game.zombies.filter((zombie) => zombie.hp > 0);
       if (game.zombies.length === 0 && game.messageTimer <= 0) {
         game.message = game.room >= FINAL_ROOM ? 'Финальный босс повержен. Заезжай в портал.' : 'Комната зачищена. Тащи вагонетку в портал и жми E.';
         game.messageTimer = 0.6;
+      }
+      if (game.zombies.length === 0 && !game.roomRewarded) {
+        const reward = game.room % 5 === 0 ? 5 : 2;
+        game.coins += reward;
+        game.roomRewarded = true;
+        game.message = `Комната зачищена. +${reward} деталей для магазина.`;
+        game.messageTimer = 1.4;
       }
 
       if (p.hp <= 0 || game.cart.hp <= 0) {
@@ -641,6 +871,9 @@ export default function App() {
         game.location = 0;
         game.room = 1;
         game.won = false;
+        game.paused = false;
+        game.roomRewarded = false;
+        game.projectiles = [];
         game.zombies = spawnZombies(game.location, game.room);
         game.message = p.hp <= 0 ? 'Рестарт. Поймай тайминг парирования.' : 'Вагонетку сломали. Начинаем заново.';
         game.messageTimer = 2;
@@ -667,6 +900,7 @@ export default function App() {
       drawBackground(time);
       drawPortal(time);
       drawCart();
+      drawProjectiles();
       for (const zombie of game.zombies) drawZombie(zombie);
       drawPlayer();
       drawSparks();
@@ -685,6 +919,8 @@ export default function App() {
       }
       ctx.fillStyle = game.parryCooldown > 0 ? '#7d8192' : '#fff36e';
       ctx.fillText(game.parryCooldown > 0 ? 'F cooling' : 'F parry ready', 176, 47);
+      ctx.fillStyle = game.parryColor;
+      ctx.fillText(`Parts ${game.coins}`, 176, 105);
 
       if (game.messageTimer > 0) {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
@@ -698,12 +934,16 @@ export default function App() {
     };
 
     const loop = (time: number) => {
-      const dt = Math.min(0.033, (time - last) / 1000);
-      last = time;
-      frame += 1;
-      update(dt);
-      draw(time);
       const game = gameRef.current;
+      const elapsed = time - last;
+      const dt = game.paused ? 0 : Math.min(0.033, elapsed / 1000);
+      last = time;
+      if (!game.paused) {
+        frame += 1;
+        visualTime += elapsed;
+      }
+      update(dt);
+      draw(visualTime);
       setHud({
         hp: game.player.hp,
         cartHp: game.cart.hp,
@@ -712,6 +952,9 @@ export default function App() {
         zombies: game.zombies.length,
         boss: game.zombies.some((zombie) => zombie.kind === 'boss'),
         won: game.won,
+        coins: game.coins,
+        radiusLevel: game.radiusLevel,
+        parryColor: game.parryColor,
         message: game.message,
       });
       requestAnimationFrame(loop);
@@ -753,6 +996,12 @@ export default function App() {
           <span>Location: {hud.location}</span>
           <span>{hud.boss ? 'Boss: alive' : `Zombies: ${hud.zombies}`}</span>
           <span>Goal: {hud.won ? 'finished' : `${Math.min(hud.room, FINAL_ROOM)}/${FINAL_ROOM}`}</span>
+          <span>Parts: {hud.coins}</span>
+          <span>Radius: +{hud.radiusLevel}</span>
+        </div>
+        <div className="panel-actions">
+          <button type="button" onClick={openMenu}>Menu</button>
+          <button type="button" onClick={() => { gameRef.current.paused = true; setMenu('shop'); }}>Shop</button>
         </div>
         <div className="controls">
           <kbd>A</kbd><kbd>D</kbd><span>ходьба</span>
@@ -766,6 +1015,55 @@ export default function App() {
       <aside className="auth-panel">
         <Auth />
       </aside>
+
+      {menu !== 'closed' && (
+        <section className="menu-overlay">
+          <div className="menu-window">
+            <div className="menu-title">
+              <h2>{menu === 'shop' ? 'Shop' : 'Carry a Parry'}</h2>
+              <span>{hud.coins} parts</span>
+            </div>
+
+            {menu === 'main' ? (
+              <>
+                <button type="button" onClick={startGame}>Start</button>
+                <button type="button" onClick={() => setMenu('shop')}>Shop</button>
+              </>
+            ) : (
+              <>
+                <div className="shop-row">
+                  <div>
+                    <strong>Parry radius</strong>
+                    <span>Level {hud.radiusLevel}/5</span>
+                  </div>
+                  <button type="button" onClick={buyRadius} disabled={gameRef.current.radiusLevel >= 5 || hud.coins < 4 + hud.radiusLevel * 3}>
+                    {hud.radiusLevel >= 5 ? 'Max' : `${4 + hud.radiusLevel * 3} parts`}
+                  </button>
+                </div>
+                <div className="swatches">
+                  {parryColors.map((item) => {
+                    const unlocked = gameRef.current.unlockedColors.includes(item.color);
+                    return (
+                      <button
+                        key={item.color}
+                        type="button"
+                        className={hud.parryColor === item.color ? 'swatch active' : 'swatch'}
+                        style={{ backgroundColor: item.color }}
+                        onClick={() => buyColor(item.color, item.cost)}
+                        disabled={!unlocked && hud.coins < item.cost}
+                        aria-label={`${item.name} parry color`}
+                      >
+                        <span>{unlocked ? item.name : `${item.cost}`}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button type="button" className="ghost" onClick={() => setMenu('main')}>Back</button>
+              </>
+            )}
+          </div>
+        </section>
+      )}
     </main>
   );
 }

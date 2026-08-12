@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 type Keys = Record<string, boolean>;
 
@@ -14,6 +15,7 @@ type Zombie = {
   windupTimer: number;
   attackTarget: 'player' | 'cart' | null;
   parriedThisSwing: boolean;
+  specialCounter: number;
   kind: 'crawler' | 'runner' | 'brute' | 'shooter' | 'boss';
 };
 
@@ -37,23 +39,27 @@ type Projectile = {
   kind: 'star' | 'boulder' | 'acid' | 'acidStar';
   targetX?: number;
   targetY?: number;
+  target?: 'player' | 'cart';
   warning?: number;
   totalWarning?: number;
 };
 
 type GameAccount = {
   username: string;
-  password: string;
+  password?: string;
   role: 'player' | 'admin';
   parts: number;
   radiusLevel: number;
   parryColor: string;
   unlockedColors: string[];
+  hasShotgun: boolean;
+  provider?: 'local' | 'google';
 };
 
 type Profile = {
   username: string;
   role: 'player' | 'admin';
+  accountId?: string;
 };
 
 const WIDTH = 960;
@@ -119,6 +125,18 @@ function chapterPalette(room: number) {
   return chapterPalettes[clamp(Math.floor((room - 1) / 5), 0, chapterPalettes.length - 1)];
 }
 
+function isShopRoom(room: number) {
+  return room % 1 !== 0;
+}
+
+function isBossRoom(room: number) {
+  return Number.isInteger(room) && room % 5 === 0;
+}
+
+function displayRoom(room: number) {
+  return Number.isInteger(room) ? String(room) : room.toFixed(1);
+}
+
 function rectsOverlap(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
@@ -138,6 +156,13 @@ function cartHurtBox(cart: { x: number; y: number }) {
     y: cart.y - 2,
     w: 102,
     h: 62,
+  };
+}
+
+function rectCenter(rect: { x: number; y: number; w: number; h: number }) {
+  return {
+    x: rect.x + rect.w / 2,
+    y: rect.y + rect.h / 2,
   };
 }
 
@@ -166,7 +191,7 @@ function readAccounts(): GameAccount[] {
   try {
     const accounts = JSON.parse(localStorage.getItem(ACCOUNTS_KEY) ?? '[]') as Partial<GameAccount>[];
     return accounts
-      .filter((account): account is Partial<GameAccount> & { username: string; password: string } => Boolean(account.username && account.password))
+      .filter((account): account is Partial<GameAccount> & { username: string } => Boolean(account.username))
       .map((account) => ({
         username: account.username,
         password: account.password,
@@ -175,6 +200,8 @@ function readAccounts(): GameAccount[] {
         radiusLevel: account.radiusLevel ?? 0,
         parryColor: account.parryColor ?? parryColors[0].color,
         unlockedColors: account.unlockedColors?.length ? account.unlockedColors : [parryColors[0].color],
+        hasShotgun: account.hasShotgun ?? false,
+        provider: account.provider ?? 'local',
       }));
   } catch {
     return [];
@@ -208,12 +235,14 @@ function createZombie(kind: Zombie['kind'], x: number, room: number, index = 0):
     windupTimer: 0,
     attackTarget: null,
     parriedThisSwing: false,
+    specialCounter: 0,
     kind,
   };
 }
 
 function spawnZombies(locationIndex: number, room: number): Zombie[] {
-  if (room % 5 === 0) {
+  if (isShopRoom(room)) return [];
+  if (isBossRoom(room)) {
     const boss = createZombie('boss', 700, room, 0);
     return [boss];
   }
@@ -253,7 +282,9 @@ export default function App() {
     radiusLevel: 0,
     parryColor: parryColors[0].color,
     unlockedColors: [parryColors[0].color],
+    hasShotgun: false,
     roomRewarded: false,
+    showHitboxes: false,
     message: 'Комната 1. Защищай вагонетку и чисти путь.',
     messageTimer: 4,
   });
@@ -268,6 +299,8 @@ export default function App() {
     coins: 0,
     radiusLevel: 0,
     parryColor: parryColors[0].color,
+    hasShotgun: false,
+    showHitboxes: false,
     message: 'Комната 1. Защищай вагонетку и чисти путь.',
   });
   const [menu, setMenu] = useState<'main' | 'shop' | 'closed'>('main');
@@ -280,6 +313,63 @@ export default function App() {
   useEffect(() => {
     profileRef.current = profile;
   }, [profile]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    const loadGoogleProfile = async () => {
+      const { data } = await supabase.auth.getSession();
+      const user = data.session?.user;
+      if (!user?.email) return;
+
+      const username = `google:${user.email}`;
+      const accounts = readAccounts();
+      let account = accounts.find((item) => item.username === username);
+      if (!account) {
+        account = {
+          username,
+          role: 'player',
+          parts: gameRef.current.coins,
+          radiusLevel: gameRef.current.radiusLevel,
+          parryColor: gameRef.current.parryColor,
+          unlockedColors: gameRef.current.unlockedColors,
+          hasShotgun: gameRef.current.hasShotgun,
+          provider: 'google',
+        };
+        writeAccounts([...accounts, account]);
+      }
+      applyAccountProgress(account);
+      setProfile({ username: user.user_metadata?.full_name ?? user.email, role: 'player', accountId: username });
+      setAuthMessage('Signed in with Google.');
+    };
+
+    void loadGoogleProfile();
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      const email = session?.user.email;
+      if (!email) return;
+      const username = `google:${email}`;
+      const accounts = readAccounts();
+      let account = accounts.find((item) => item.username === username);
+      if (!account) {
+        account = {
+          username,
+          role: 'player',
+          parts: gameRef.current.coins,
+          radiusLevel: gameRef.current.radiusLevel,
+          parryColor: gameRef.current.parryColor,
+          unlockedColors: gameRef.current.unlockedColors,
+          hasShotgun: gameRef.current.hasShotgun,
+          provider: 'google',
+        };
+        writeAccounts([...accounts, account]);
+      }
+      applyAccountProgress(account);
+      setProfile({ username: session.user.user_metadata?.full_name ?? email, role: 'player', accountId: username });
+      setAuthMessage('Signed in with Google.');
+    });
+
+    return () => data.subscription.unsubscribe();
+  }, []);
 
   const startGame = () => {
     gameRef.current.paused = false;
@@ -304,10 +394,38 @@ export default function App() {
               radiusLevel: game.radiusLevel,
               parryColor: game.parryColor,
               unlockedColors: game.unlockedColors,
+              hasShotgun: game.hasShotgun,
             }
           : account,
       ),
     );
+  };
+
+  const applyAccountProgress = (account: GameAccount) => {
+    gameRef.current.coins = account.parts;
+    gameRef.current.radiusLevel = account.radiusLevel;
+    gameRef.current.parryColor = account.parryColor;
+    gameRef.current.unlockedColors = account.unlockedColors;
+    gameRef.current.hasShotgun = account.hasShotgun;
+    setHud((current) => ({
+      ...current,
+      coins: account.parts,
+      radiusLevel: account.radiusLevel,
+      parryColor: account.parryColor,
+      hasShotgun: account.hasShotgun,
+    }));
+  };
+
+  const signInWithGoogle = async () => {
+    if (!isSupabaseConfigured) {
+      setAuthMessage('Сначала вставь Supabase URL и key в .env.');
+      return;
+    }
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) setAuthMessage(error.message);
   };
 
   const buyRadius = () => {
@@ -318,7 +436,7 @@ export default function App() {
     game.radiusLevel += 1;
     game.message = `Радиус парирования +${game.radiusLevel}`;
     game.messageTimer = 1.4;
-    saveProgress(profile?.username);
+    saveProgress(profile?.accountId ?? profile?.username);
     setHud((current) => ({ ...current, coins: game.coins, radiusLevel: game.radiusLevel }));
   };
 
@@ -332,12 +450,36 @@ export default function App() {
     game.parryColor = color;
     game.message = 'Цвет парирования выбран.';
     game.messageTimer = 1.2;
-    saveProgress(profile?.username);
+    saveProgress(profile?.accountId ?? profile?.username);
     setHud((current) => ({ ...current, coins: game.coins, parryColor: color }));
   };
 
+  const buyHeal = () => {
+    const game = gameRef.current;
+    const cost = 6;
+    if (game.coins < cost || game.player.hp >= 6) return;
+    game.coins -= cost;
+    game.player.hp = Math.min(6, game.player.hp + 3);
+    game.message = 'Healed +3 HP';
+    game.messageTimer = 1.2;
+    saveProgress(profile?.accountId ?? profile?.username);
+    setHud((current) => ({ ...current, coins: game.coins, hp: game.player.hp }));
+  };
+
+  const buyShotgun = () => {
+    const game = gameRef.current;
+    const cost = 40;
+    if (game.hasShotgun || game.coins < cost) return;
+    game.coins -= cost;
+    game.hasShotgun = true;
+    game.message = 'Shotgun unlocked';
+    game.messageTimer = 1.2;
+    saveProgress(profile?.accountId ?? profile?.username);
+    setHud((current) => ({ ...current, coins: game.coins, hasShotgun: true }));
+  };
+
   const jumpToRoom = (roomValue: number) => {
-    const room = clamp(Math.round(roomValue), 1, FINAL_ROOM);
+    const room = clamp(Math.round(roomValue * 2) / 2, 1, FINAL_ROOM);
     const game = gameRef.current;
     game.room = room;
     game.location = (room - 1) % locations.length;
@@ -351,7 +493,7 @@ export default function App() {
     game.hitStop = 0;
     game.won = false;
     game.roomRewarded = false;
-    game.message = room % 5 === 0 ? `Admin jump: boss room ${room}` : `Admin jump: room ${room}`;
+    game.message = isShopRoom(room) ? `Admin jump: shop ${displayRoom(room)}` : isBossRoom(room) ? `Admin jump: boss room ${room}` : `Admin jump: room ${room}`;
     game.messageTimer = 2;
     game.paused = false;
     setMenu('closed');
@@ -366,6 +508,12 @@ export default function App() {
       won: false,
       message: game.message,
     }));
+  };
+
+  const toggleHitboxes = () => {
+    const game = gameRef.current;
+    game.showHitboxes = !game.showHitboxes;
+    setHud((current) => ({ ...current, showHitboxes: game.showHitboxes }));
   };
 
   const handleGameAuth = (event: React.FormEvent) => {
@@ -400,6 +548,7 @@ export default function App() {
         radiusLevel: gameRef.current.radiusLevel,
         parryColor: gameRef.current.parryColor,
         unlockedColors: gameRef.current.unlockedColors,
+        hasShotgun: gameRef.current.hasShotgun,
       };
       writeAccounts([...accounts, account]);
       setProfile({ username, role: 'player' });
@@ -412,21 +561,13 @@ export default function App() {
       setAuthMessage('Неверный логин или пароль.');
       return;
     }
-    gameRef.current.coins = account.parts;
-    gameRef.current.radiusLevel = account.radiusLevel;
-    gameRef.current.parryColor = account.parryColor;
-    gameRef.current.unlockedColors = account.unlockedColors;
-    setHud((current) => ({
-      ...current,
-      coins: account.parts,
-      radiusLevel: account.radiusLevel,
-      parryColor: account.parryColor,
-    }));
+    applyAccountProgress(account);
     setProfile({ username: account.username, role: account.role });
     setAuthMessage('Signed in.');
   };
 
-  const signOut = () => {
+  const signOut = async () => {
+    if (isSupabaseConfigured) await supabase.auth.signOut();
     setProfile(null);
     setAuthMessage('');
     setAuthForm({ username: '', password: '' });
@@ -480,15 +621,15 @@ export default function App() {
 
     const switchLocation = () => {
       const game = gameRef.current;
-      if (game.room >= FINAL_ROOM) {
+      if (game.room >= FINAL_ROOM && isShopRoom(game.room)) {
         game.won = true;
         game.message = 'Финал: 25 комнат пройдены. Вагонетка выжила.';
         game.messageTimer = 99;
         addSparks(WIDTH / 2, GROUND - 145, '#fff36e', 80);
         return;
       }
-      game.room += 1;
-      game.location = (game.location + 1) % locations.length;
+      game.room = isBossRoom(game.room) ? game.room + 0.5 : Math.floor(game.room) + 1;
+      game.location = (Math.floor(game.room) - 1) % locations.length;
       game.player.x = 130;
       game.cart.x = 40;
       game.cart.hp = Math.min(game.cart.maxHp, game.cart.hp + 2);
@@ -496,9 +637,17 @@ export default function App() {
       game.projectiles = [];
       game.roomRewarded = false;
       game.portalTimer = 0.7;
-      game.message = game.room % 5 === 0 ? `БОСС ${game.room / 5}: ${locations[game.location].name}` : `Комната ${game.room}: ${locations[game.location].name}`;
+      game.message = isShopRoom(game.room)
+        ? `Магазин ${displayRoom(game.room)}: закупись перед дорогой.`
+        : isBossRoom(game.room)
+          ? `БОСС ${game.room / 5}: ${locations[game.location].name}`
+          : `Комната ${game.room}: ${locations[game.location].name}`;
       game.messageTimer = 2.8;
       addSparks(850, GROUND - 80, chapterPalette(game.room).accent, 36);
+      if (isShopRoom(game.room)) {
+        game.paused = true;
+        setMenu('shop');
+      }
     };
 
     const drawBossLayout = (room: number, time: number) => {
@@ -549,7 +698,8 @@ export default function App() {
 
     const drawBackground = (time: number) => {
       const game = gameRef.current;
-      const isBossRoom = game.room % 5 === 0;
+      const bossRoom = isBossRoom(game.room);
+      const shopRoom = isShopRoom(game.room);
       const baseLoc = locations[game.location];
       const loc = chapterPalette(game.room);
       const gradient = ctx.createLinearGradient(0, 0, 0, HEIGHT);
@@ -579,8 +729,15 @@ export default function App() {
 
       ctx.fillStyle = loc.hazard;
       ctx.globalAlpha = 0.78;
-      if (isBossRoom) {
+      if (bossRoom) {
         drawBossLayout(game.room, time);
+      } else if (shopRoom) {
+        ctx.fillStyle = loc.hazard;
+        for (const x of [170, 380, 590, 800]) {
+          ctx.fillRect(x, GROUND - 150, 24, 150);
+          ctx.fillRect(x - 34, GROUND - 154, 92, 12);
+          ctx.fillRect(x - 20, GROUND - 104, 64, 9);
+        }
       } else if (baseLoc.decor === 'cranes') {
         for (let i = 0; i < 4; i += 1) {
           const x = 95 + i * 225 - ((time * 0.018) % 90);
@@ -618,7 +775,7 @@ export default function App() {
         ctx.fillRect(80 + i * 135, GROUND + 10 + (i % 2) * 28, 46, 3);
       }
 
-      if (isBossRoom) {
+      if (bossRoom) {
         ctx.globalAlpha = 0.2;
         ctx.fillStyle = loc.accent;
         ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -626,6 +783,14 @@ export default function App() {
         ctx.fillStyle = loc.accent;
         ctx.font = '900 28px Inter, system-ui, sans-serif';
         ctx.fillText(`BOSS ROOM ${game.room} - ARENA ${game.room / 5}`, 34, GROUND - 305);
+      } else if (shopRoom) {
+        ctx.globalAlpha = 0.18;
+        ctx.fillStyle = loc.accent;
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = loc.accent;
+        ctx.font = '900 28px Inter, system-ui, sans-serif';
+        ctx.fillText(`SHOP ROOM ${displayRoom(game.room)}`, 34, GROUND - 305);
       }
     };
 
@@ -692,10 +857,12 @@ export default function App() {
       ctx.fillStyle = '#9da7b7';
       ctx.fillRect(cart.x + 25, cart.y - 12, 42, 14);
 
-      const hurtBox = cartHurtBox(cart);
-      ctx.strokeStyle = 'rgba(255, 46, 86, 0.95)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(hurtBox.x, hurtBox.y, hurtBox.w, hurtBox.h);
+      if (gameRef.current.showHitboxes) {
+        const hurtBox = cartHurtBox(cart);
+        ctx.strokeStyle = 'rgba(255, 46, 86, 0.95)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(hurtBox.x, hurtBox.y, hurtBox.w, hurtBox.h);
+      }
     };
 
     const drawPlayer = () => {
@@ -750,10 +917,12 @@ export default function App() {
         ctx.shadowBlur = 0;
       }
 
-      const hurtBox = playerHurtBox(player);
-      ctx.strokeStyle = 'rgba(255, 46, 86, 0.95)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(hurtBox.x, hurtBox.y, hurtBox.w, hurtBox.h);
+      if (gameRef.current.showHitboxes) {
+        const hurtBox = playerHurtBox(player);
+        ctx.strokeStyle = 'rgba(255, 46, 86, 0.95)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(hurtBox.x, hurtBox.y, hurtBox.w, hurtBox.h);
+      }
     };
 
     const drawWarningStar = (x: number, y: number, size: number, color: string) => {
@@ -1055,6 +1224,8 @@ export default function App() {
         }
         const cartBox = cartHurtBox(game.cart);
         const playerBox = playerHurtBox(p);
+        const cartHitCenter = rectCenter(cartBox);
+        const playerHitCenter = rectCenter(playerBox);
         const canHitCart = rectsOverlap(cartBox, zombieBox);
         const canHitPlayer = rectsOverlap(playerBox, zombieBox);
 
@@ -1066,8 +1237,8 @@ export default function App() {
         }
 
         if (!stopped && zombie.kind === 'shooter' && zombie.hp > 0 && zombie.windupTimer <= 0 && zombie.attackTarget) {
-          const targetX = zombie.attackTarget === 'cart' ? game.cart.x + 56 : p.x + PLAYER_W / 2;
-          const targetY = zombie.attackTarget === 'cart' ? game.cart.y + 10 : p.y + 34;
+          const targetX = zombie.attackTarget === 'cart' ? cartHitCenter.x : playerHitCenter.x;
+          const targetY = zombie.attackTarget === 'cart' ? cartHitCenter.y : playerHitCenter.y;
           const dx = targetX - (zombie.x + 34);
           const dy = targetY - (zombie.y + 8);
           const distance = Math.hypot(dx, dy) || 1;
@@ -1081,6 +1252,7 @@ export default function App() {
             damage: game.room >= 15 ? 2 : 1,
             size: 11,
             kind: 'star',
+            target: zombie.attackTarget,
           });
           addSparks(zombie.x + 42, zombie.y + 6, '#57d5ff', 10);
           zombie.attackTarget = null;
@@ -1089,8 +1261,9 @@ export default function App() {
 
         if (!stopped && zombie.kind === 'boss' && game.room === 5 && zombie.hp > 0 && zombie.biteTimer <= 0 && zombie.windupTimer <= 0) {
           const targetCart = game.cart.hp <= p.hp;
-          const targetX = targetCart ? game.cart.x + 56 : p.x + PLAYER_W / 2;
-          const targetY = GROUND + 2;
+          const targetPoint = targetCart ? cartHitCenter : playerHitCenter;
+          const targetX = targetPoint.x;
+          const targetY = targetPoint.y;
           const warning = Math.max(0.52, 1.05 - game.room * 0.02);
           game.projectiles.push({
             x: targetX,
@@ -1103,6 +1276,7 @@ export default function App() {
             kind: 'boulder',
             targetX,
             targetY,
+            target: targetCart ? 'cart' : 'player',
             warning,
             totalWarning: warning,
           });
@@ -1114,30 +1288,32 @@ export default function App() {
         }
 
         if (!stopped && zombie.kind === 'boss' && game.room === 10 && zombie.hp > 0 && zombie.biteTimer <= 0 && zombie.windupTimer <= 0) {
-          for (let i = 0; i < 6; i += 1) {
-            const isBlueStar = (i + 1) % 3 === 0;
-            const targetX = clamp(p.x + PLAYER_W / 2 + (i - 2.5) * 34 + Math.sin(frame + i) * 18, 55, WIDTH - 55);
-            const targetY = GROUND + 1;
-            const warning = 1.05 + i * 0.2;
-            game.projectiles.push({
-              x: targetX,
-              y: 92,
-              vx: 0,
-              vy: 190 + i * 8,
-              life: 3.2,
-              damage: isBlueStar ? 1 : 1,
-              size: isBlueStar ? 13 : 10,
-              kind: isBlueStar ? 'acidStar' : 'acid',
-              targetX,
-              targetY,
-              warning,
-              totalWarning: warning,
-            });
-          }
+          zombie.specialCounter += 1;
+          const isBlueStar = zombie.specialCounter % 3 === 0;
+          const targetCart = game.cart.hp <= p.hp && Math.abs(cartHitCenter.x - playerHitCenter.x) > 45;
+          const targetPoint = targetCart ? cartHitCenter : playerHitCenter;
+          const targetX = clamp(targetPoint.x, 55, WIDTH - 55);
+          const targetY = targetPoint.y;
+          const warning = isBlueStar ? 1.15 : 1.0;
+          game.projectiles.push({
+            x: targetX,
+            y: 92,
+            vx: 0,
+            vy: isBlueStar ? 185 : 205,
+            life: 3.2,
+            damage: 1,
+            size: isBlueStar ? 13 : 10,
+            kind: isBlueStar ? 'acidStar' : 'acid',
+            targetX,
+            targetY,
+            target: targetCart ? 'cart' : 'player',
+            warning,
+            totalWarning: warning,
+          });
           zombie.windupTimer = 0.45;
           zombie.attackTarget = null;
-          zombie.biteTimer = 3.1;
-          game.message = 'Леший вызывает кислотный дождь. Синие звезды парируются.';
+          zombie.biteTimer = isBlueStar ? 1.55 : 1.25;
+          game.message = isBlueStar ? 'Синяя кислотная звезда: парируй в лешего.' : 'Леший вызывает одну кислотную каплю.';
           game.messageTimer = 1.4;
         }
 
@@ -1225,6 +1401,12 @@ export default function App() {
           const isAcid = projectile.kind === 'acid' || projectile.kind === 'acidStar';
           const activeX = isBoulder || isAcid ? projectile.targetX ?? projectile.x : projectile.x;
           const activeY = isBoulder || isAcid ? projectile.targetY ?? projectile.y : projectile.y;
+          const acidDropBox = {
+            x: projectile.x - Math.max(4, projectile.size * 0.42),
+            y: projectile.y - Math.max(6, projectile.size * 0.68),
+            w: Math.max(8, projectile.size * 0.84),
+            h: Math.max(12, projectile.size * 1.36),
+          };
           const projectileBox = {
             x: activeX - projectile.size,
             y: activeY - projectile.size,
@@ -1272,12 +1454,12 @@ export default function App() {
           if (isBoulder && projectile.y >= (projectile.targetY ?? GROUND)) {
             addSparks(activeX, activeY, '#8b8172', 30);
             game.hitStop = Math.max(game.hitStop, 0.04);
-            if (rectsOverlap(playerBox, projectileBox) && p.invuln <= 0) {
+            if (projectile.target !== 'cart' && rectsOverlap(playerBox, projectileBox) && p.invuln <= 0) {
               p.hp -= projectile.damage;
               p.invuln = 0.8;
               game.message = 'Булыжник попал. Можно было отойти или парировать тень.';
               game.messageTimer = 1.2;
-            } else if (rectsOverlap(cartBox, projectileBox) && game.cart.invuln <= 0) {
+            } else if (projectile.target !== 'player' && rectsOverlap(cartBox, projectileBox) && game.cart.invuln <= 0) {
               game.cart.hp -= projectile.damage;
               game.cart.invuln = 0.75;
               game.message = 'Булыжник ударил вагонетку.';
@@ -1290,14 +1472,33 @@ export default function App() {
             return projectile.life > 0;
           }
 
+          if (isAcid && projectile.y < (projectile.targetY ?? GROUND)) {
+            if (projectile.target !== 'cart' && rectsOverlap(playerBox, acidDropBox) && p.invuln <= 0) {
+              p.hp -= projectile.damage;
+              p.invuln = 0.55;
+              addSparks(projectile.x, projectile.y, projectile.kind === 'acidStar' ? '#57d5ff' : '#80ff5c', 14);
+              game.message = projectile.kind === 'acidStar' ? 'Синюю кислотную звезду можно парировать.' : 'Зеленая кислота не парируется.';
+              game.messageTimer = 1;
+              return false;
+            }
+            if (projectile.target !== 'player' && rectsOverlap(cartBox, acidDropBox) && game.cart.invuln <= 0) {
+              game.cart.hp -= projectile.damage;
+              game.cart.invuln = 0.55;
+              addSparks(projectile.x, projectile.y, projectile.kind === 'acidStar' ? '#57d5ff' : '#80ff5c', 14);
+              game.message = 'Кислотный дождь попал по вагонетке.';
+              game.messageTimer = 1;
+              return false;
+            }
+          }
+
           if (isAcid && projectile.y >= (projectile.targetY ?? GROUND)) {
             addSparks(activeX, activeY, projectile.kind === 'acidStar' ? '#57d5ff' : '#80ff5c', 20);
-            if (rectsOverlap(playerBox, projectileBox) && p.invuln <= 0) {
+            if (projectile.target !== 'cart' && rectsOverlap(playerBox, acidDropBox) && p.invuln <= 0) {
               p.hp -= projectile.damage;
               p.invuln = 0.55;
               game.message = projectile.kind === 'acidStar' ? 'Синюю кислотную звезду можно парировать.' : 'Зеленая кислота не парируется.';
               game.messageTimer = 1;
-            } else if (rectsOverlap(cartBox, projectileBox) && game.cart.invuln <= 0) {
+            } else if (projectile.target !== 'player' && rectsOverlap(cartBox, acidDropBox) && game.cart.invuln <= 0) {
               game.cart.hp -= projectile.damage;
               game.cart.invuln = 0.55;
               game.message = 'Кислотный дождь попал по вагонетке.';
@@ -1306,7 +1507,7 @@ export default function App() {
             return false;
           }
 
-          if (rectsOverlap(playerBox, projectileBox) && p.invuln <= 0) {
+          if (projectile.target !== 'cart' && rectsOverlap(playerBox, projectileBox) && p.invuln <= 0) {
             p.hp -= projectile.damage;
             p.invuln = 0.75;
             addSparks(projectile.x, projectile.y, '#ff5f6d', 16);
@@ -1315,7 +1516,7 @@ export default function App() {
             return false;
           }
 
-          if (rectsOverlap(cartBox, projectileBox) && game.cart.invuln <= 0) {
+          if (projectile.target !== 'player' && rectsOverlap(cartBox, projectileBox) && game.cart.invuln <= 0) {
             game.cart.hp -= projectile.damage;
             game.cart.invuln = 0.65;
             addSparks(projectile.x, projectile.y, '#ff6b4f', 16);
@@ -1328,14 +1529,14 @@ export default function App() {
         });
 
       game.zombies = game.zombies.filter((zombie) => zombie.hp > 0);
-      if (game.zombies.length === 0 && game.messageTimer <= 0) {
+      if (game.zombies.length === 0 && !isShopRoom(game.room) && game.messageTimer <= 0) {
         game.message = game.room >= FINAL_ROOM ? 'Финальный босс повержен. Заезжай в портал.' : 'Комната зачищена. Тащи вагонетку в портал и жми E.';
         game.messageTimer = 0.6;
       }
-      if (game.zombies.length === 0 && !game.roomRewarded) {
-        const reward = game.room % 5 === 0 ? 5 : 2;
+      if (game.zombies.length === 0 && !isShopRoom(game.room) && !game.roomRewarded) {
+        const reward = isBossRoom(game.room) ? 5 : 2;
         game.coins += reward;
-        saveProgress(profileRef.current?.username);
+        saveProgress(profileRef.current?.accountId ?? profileRef.current?.username);
         game.roomRewarded = true;
         game.message = `Комната зачищена. +${reward} деталей для магазина.`;
         game.messageTimer = 1.4;
@@ -1385,11 +1586,11 @@ export default function App() {
       ctx.fillRect(18, 18, 360, 106);
       ctx.fillStyle = '#ffffff';
       ctx.font = '700 18px Inter, system-ui, sans-serif';
-      ctx.fillText(`Room ${game.room}`, 34, 47);
+      ctx.fillText(`Room ${displayRoom(game.room)}`, 34, 47);
       ctx.fillText(`Hero ${'|'.repeat(game.player.hp)}`, 34, 76);
       ctx.fillText(`Cart ${'|'.repeat(game.cart.hp)}`, 34, 105);
       ctx.fillText(`${locations[game.location].name}`, 176, 76);
-      if (game.room % 5 === 0 && game.zombies.some((zombie) => zombie.kind === 'boss')) {
+      if (isBossRoom(game.room) && game.zombies.some((zombie) => zombie.kind === 'boss')) {
         ctx.fillStyle = '#ff3a54';
         ctx.fillText('BOSS', 296, 105);
       }
@@ -1434,6 +1635,8 @@ export default function App() {
         coins: game.coins,
         radiusLevel: game.radiusLevel,
         parryColor: game.parryColor,
+        hasShotgun: game.hasShotgun,
+        showHitboxes: game.showHitboxes,
         message: game.message,
       });
       requestAnimationFrame(loop);
@@ -1471,12 +1674,13 @@ export default function App() {
         <div className="stats">
           <span>HP: {hud.hp}</span>
           <span>Cart: {hud.cartHp}</span>
-          <span>Room: {hud.room}</span>
+          <span>Room: {displayRoom(hud.room)}</span>
           <span>Location: {hud.location}</span>
           <span>{hud.boss ? 'Boss: alive' : `Zombies: ${hud.zombies}`}</span>
           <span>Goal: {hud.won ? 'finished' : `${Math.min(hud.room, FINAL_ROOM)}/${FINAL_ROOM}`}</span>
           <span>Parts: {hud.coins}</span>
           <span>Radius: +{hud.radiusLevel}</span>
+          <span>Shotgun: {hud.hasShotgun ? 'yes' : 'no'}</span>
         </div>
         <div className="panel-actions">
           <button type="button" onClick={openMenu}>Menu</button>
@@ -1501,6 +1705,7 @@ export default function App() {
               <span>{hud.coins} saved parts</span>
               <span>radius +{hud.radiusLevel}</span>
               {profile.role === 'admin' && (
+                <>
                 <form
                   className="admin-jump"
                   onSubmit={(event) => {
@@ -1518,12 +1723,17 @@ export default function App() {
                   />
                   <button type="submit">Go</button>
                 </form>
+                <button type="button" className="ghost" onClick={toggleHitboxes}>
+                  {hud.showHitboxes ? 'Hide hitboxes' : 'Show hitboxes'}
+                </button>
+                </>
               )}
               <button type="button" className="ghost" onClick={signOut}>Sign out</button>
             </div>
           ) : (
-            <form className="form" onSubmit={handleGameAuth}>
-              <div className="auth-tabs">
+	            <form className="form" onSubmit={handleGameAuth}>
+	              <button type="button" className="google-button" onClick={signInWithGoogle}>Continue with Google</button>
+	              <div className="auth-tabs">
                 <button type="button" className={authMode === 'signin' ? 'active' : ''} onClick={() => setAuthMode('signin')}>Sign in</button>
                 <button type="button" className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')}>Sign up</button>
               </div>
@@ -1562,16 +1772,32 @@ export default function App() {
               </>
             ) : (
               <>
-                <div className="shop-row">
-                  <div>
-                    <strong>Parry radius</strong>
-                    <span>Level {hud.radiusLevel}/5</span>
-                  </div>
-                  <button type="button" onClick={buyRadius} disabled={gameRef.current.radiusLevel >= 5 || hud.coins < 4 + hud.radiusLevel * 3}>
-                    {hud.radiusLevel >= 5 ? 'Max' : `${4 + hud.radiusLevel * 3} parts`}
-                  </button>
-                </div>
-                <div className="swatches">
+	                <div className="shop-row">
+	                  <div>
+	                    <strong>Parry radius</strong>
+	                    <span>Level {hud.radiusLevel}/5</span>
+	                  </div>
+	                  <button type="button" onClick={buyRadius} disabled={gameRef.current.radiusLevel >= 5 || hud.coins < 4 + hud.radiusLevel * 3}>
+	                    {hud.radiusLevel >= 5 ? 'Max' : `${4 + hud.radiusLevel * 3} parts`}
+	                  </button>
+	                </div>
+	                <div className="shop-row">
+	                  <div>
+	                    <strong>Heal +3 HP</strong>
+	                    <span>Hero HP {hud.hp}/6</span>
+	                  </div>
+	                  <button type="button" onClick={buyHeal} disabled={hud.hp >= 6 || hud.coins < 6}>6 parts</button>
+	                </div>
+	                <div className="shop-row">
+	                  <div>
+	                    <strong>Shotgun</strong>
+	                    <span>{hud.hasShotgun ? 'Unlocked' : 'Close-range burst weapon'}</span>
+	                  </div>
+	                  <button type="button" onClick={buyShotgun} disabled={hud.hasShotgun || hud.coins < 40}>
+	                    {hud.hasShotgun ? 'Owned' : '40 parts'}
+	                  </button>
+	                </div>
+	                <div className="swatches">
                   {parryColors.map((item) => {
                     const unlocked = gameRef.current.unlockedColors.includes(item.color);
                     return (

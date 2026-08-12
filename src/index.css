@@ -215,6 +215,11 @@ button.ghost {
   color: #f4f0df;
 }
 
+.google-button {
+  background: #ffffff;
+  color: #202124;
+}
+
 .message {
   margin: 10px 0 0;
   color: #ffda67;

@@ -41,8 +41,18 @@ button {
   align-items: start;
 }
 
+.game-stack,
 .game-stage {
   min-width: 0;
+}
+
+.game-stage {
+  position: relative;
+}
+
+.game-stack {
+  display: grid;
+  gap: 12px;
 }
 
 canvas {
@@ -166,11 +176,42 @@ kbd {
   font-weight: 900;
 }
 
-.admin-jump {
+.admin-router {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
   gap: 8px;
-  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid rgba(87, 213, 255, 0.28);
+  background: rgba(18, 25, 38, 0.72);
+}
+
+.admin-router strong {
+  color: #57d5ff;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.admin-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.admin-abuse {
+  display: grid;
+  grid-template-columns: auto repeat(3, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 46, 86, 0.38);
+  background: rgba(47, 14, 24, 0.48);
+}
+
+.admin-abuse strong {
+  color: #ff6b8a;
+  font-size: 12px;
+  text-transform: uppercase;
 }
 
 .form {
@@ -235,6 +276,71 @@ code {
   grid-template-columns: repeat(5, 1fr);
   gap: 8px;
   margin-top: 10px;
+}
+
+.mobile-hud {
+  display: none;
+  gap: 8px;
+}
+
+.mobile-bar {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: #f4f0df;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.bar-track {
+  position: relative;
+  min-height: 22px;
+  overflow: hidden;
+  border: 1px solid rgba(244, 240, 223, 0.22);
+  background: rgba(12, 12, 16, 0.86);
+}
+
+.bar-fill {
+  height: 100%;
+  min-width: 0;
+}
+
+.bar-fill.hero {
+  background: linear-gradient(90deg, #ff3a54, #ffda67);
+}
+
+.bar-fill.cart {
+  background: linear-gradient(90deg, #57d5ff, #80ff9e);
+}
+
+.bar-track strong {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  font-size: 12px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.mobile-counters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.mobile-counters span {
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 243, 110, 0.3);
+  background: rgba(16, 16, 20, 0.82);
+  color: #fff36e;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .mobile-controls button {
@@ -355,6 +461,33 @@ code {
 
   .mobile-controls {
     display: grid;
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 2;
+    grid-template-columns: 58px 58px 1fr 1fr 1fr;
+    padding: 8px;
+    border: 1px solid rgba(244, 240, 223, 0.14);
+    background: rgba(8, 9, 12, 0.42);
+    backdrop-filter: blur(4px);
+  }
+
+  .mobile-hud {
+    display: grid;
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    z-index: 2;
+    padding: 8px;
+    border: 1px solid rgba(244, 240, 223, 0.16);
+    background: rgba(8, 9, 12, 0.5);
+    backdrop-filter: blur(4px);
+  }
+
+  .admin-abuse {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -376,6 +509,66 @@ code {
   }
 
   .mobile-controls {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: 54px 54px 1fr 1fr 1fr;
+    gap: 6px;
+  }
+
+  .mobile-controls button {
+    min-height: 54px;
+    padding: 10px 8px;
+    font-size: 13px;
+  }
+
+  .mobile-bar {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .mobile-counters {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 620px) {
+  .game-shell {
+    width: 100%;
+    padding: 6px;
+    gap: 8px;
+  }
+
+  .game-panel,
+  .auth-panel,
+  .admin-abuse {
+    padding: 10px;
+  }
+
+  .mobile-hud {
+    grid-template-columns: 1fr 1fr auto;
+    align-items: center;
+    padding: 6px;
+  }
+
+  .mobile-counters {
+    grid-template-columns: 1fr;
+    min-width: 96px;
+  }
+
+  .mobile-counters span {
+    min-height: 28px;
+    font-size: 11px;
+  }
+
+  .bar-track {
+    min-height: 18px;
+  }
+
+  .mobile-controls {
+    grid-template-columns: 60px 60px 92px 92px 92px;
+    justify-content: space-between;
+    padding: 6px;
+  }
+
+  .mobile-controls button {
+    min-height: 46px;
+    padding: 8px 6px;
   }
 }

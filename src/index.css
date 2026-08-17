@@ -186,6 +186,37 @@ kbd {
   line-height: 1.35;
 }
 
+.feedback-list {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.feedback-list > strong {
+  color: #80ff9e;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.feedback-list article {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid rgba(244, 240, 223, 0.12);
+  background: rgba(32, 32, 39, 0.72);
+}
+
+.feedback-list article span {
+  color: #ffda67;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.feedback-list article p {
+  color: #f4f0df;
+  font-size: 13px;
+}
+
 .card h2 {
   margin: 0 0 14px;
   font-size: 21px;

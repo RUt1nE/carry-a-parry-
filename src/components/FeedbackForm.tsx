@@ -1,6 +1,6 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { isSupabaseConfigured } from '../lib/supabase';
-import { sendFeedback } from '../lib/feedbacks';
+import { FeedbackItem, loadFeedbacks, sendFeedback } from '../lib/feedbacks';
 
 type FeedbackFormProps = {
   playerName: string;
@@ -13,6 +13,21 @@ export function FeedbackForm({ playerName, room, canSend }: FeedbackFormProps) {
   const [message, setMessage] = useState('');
   const [status, setStatus] = useState('');
   const [sending, setSending] = useState(false);
+  const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
+
+  async function refreshFeedbacks() {
+    if (!isSupabaseConfigured) return;
+    const { data, error } = await loadFeedbacks();
+    if (error) {
+      setStatus(`Отзывы не загрузились: ${error.message}`);
+      return;
+    }
+    setFeedbacks(data ?? []);
+  }
+
+  useEffect(() => {
+    void refreshFeedbacks();
+  }, []);
 
   async function submitFeedback(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -29,6 +44,7 @@ export function FeedbackForm({ playerName, room, canSend }: FeedbackFormProps) {
     setMessage('');
     setRating(5);
     setStatus('Спасибо! Фидбек отправлен.');
+    await refreshFeedbacks();
   }
 
   if (!isSupabaseConfigured) {
@@ -70,6 +86,19 @@ export function FeedbackForm({ playerName, room, canSend }: FeedbackFormProps) {
       </form>
       {!canSend && <p>Войди через Google, чтобы отправить фидбек.</p>}
       {status && <p>{status}</p>}
+      <div className="feedback-list">
+        <strong>Последние отзывы</strong>
+        {feedbacks.length === 0 ? (
+          <p>Пока отзывов нет.</p>
+        ) : (
+          feedbacks.map((feedback) => (
+            <article key={feedback.id}>
+              <span>{feedback.player_name} · {feedback.rating}/5 · room {feedback.room}</span>
+              <p>{feedback.message}</p>
+            </article>
+          ))
+        )}
+      </div>
     </section>
   );
 }

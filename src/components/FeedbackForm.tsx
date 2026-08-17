@@ -35,7 +35,7 @@ export function FeedbackForm({ playerName, room, canSend }: FeedbackFormProps) {
     return (
       <section className="feedback-card">
         <h2>Feedback</h2>
-        <p>Supabase не настроен, поэтому отзывы пока не сохраняются.</p>
+        <p>Feedback появится после настройки Supabase в Vercel.</p>
       </section>
     );
   }

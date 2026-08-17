@@ -4183,7 +4183,7 @@ export default function App() {
         <FeedbackForm
           playerName={profile?.username ?? 'guest'}
           room={hud.room}
-          canSend={Boolean(profile?.accountId?.startsWith('google:'))}
+          canSend={Boolean(profile)}
         />
       </aside>
 

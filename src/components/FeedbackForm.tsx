@@ -84,7 +84,7 @@ export function FeedbackForm({ playerName, room, canSend }: FeedbackFormProps) {
           {sending ? 'Sending...' : 'Send feedback'}
         </button>
       </form>
-      {!canSend && <p>Войди через Google, чтобы отправить фидбек.</p>}
+      {!canSend && <p>Войди или зарегистрируйся, чтобы отправить фидбек.</p>}
       {status && <p>{status}</p>}
       <div className="feedback-list">
         <strong>Последние отзывы</strong>

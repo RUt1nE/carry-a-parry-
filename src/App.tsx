@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { FeedbackForm } from './components/FeedbackForm';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 type Keys = Record<string, boolean>;
@@ -4179,6 +4180,11 @@ export default function App() {
           <kbd>E</kbd><span>портал</span>
         </div>
         <p>{hud.message}</p>
+        <FeedbackForm
+          playerName={profile?.username ?? 'guest'}
+          room={hud.room}
+          canSend={Boolean(profile?.accountId?.startsWith('google:'))}
+        />
       </aside>
 
       <aside className="auth-panel">

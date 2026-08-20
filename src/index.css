@@ -48,6 +48,7 @@ button {
 
 .game-stage {
   position: relative;
+  isolation: isolate;
 }
 
 .game-stack {
@@ -61,8 +62,34 @@ canvas {
   display: block;
   border: 2px solid rgba(247, 240, 207, 0.22);
   background: #101014;
-  image-rendering: crisp-edges;
-  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.46);
+  image-rendering: auto;
+  filter: saturate(1.16) contrast(1.08);
+  box-shadow:
+    0 28px 90px rgba(0, 0, 0, 0.58),
+    0 0 0 1px rgba(255, 243, 110, 0.08),
+    inset 0 0 80px rgba(0, 0, 0, 0.35);
+}
+
+.game-stage::before,
+.game-stage::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.game-stage::before {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.035) 50%, rgba(0, 0, 0, 0.035) 50%),
+    radial-gradient(circle at 50% 42%, transparent 58%, rgba(0, 0, 0, 0.28));
+  background-size: 100% 4px, 100% 100%;
+  mix-blend-mode: soft-light;
+}
+
+.game-stage::after {
+  border: 1px solid rgba(255, 243, 110, 0.14);
+  box-shadow: inset 0 0 42px rgba(255, 218, 103, 0.08);
 }
 
 .game-panel {
@@ -544,6 +571,14 @@ code {
   background: rgba(8, 8, 12, 0.72);
 }
 
+.main-overlay {
+  padding: clamp(14px, 3vw, 38px);
+  background:
+    radial-gradient(circle at 76% 18%, rgba(255, 243, 110, 0.22), transparent 22rem),
+    radial-gradient(circle at 18% 82%, rgba(87, 213, 255, 0.18), transparent 24rem),
+    linear-gradient(180deg, rgba(16, 31, 46, 0.94), rgba(33, 25, 21, 0.96));
+}
+
 .menu-window {
   width: min(420px, 100%);
   border: 1px solid rgba(244, 240, 223, 0.2);
@@ -552,6 +587,53 @@ code {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
   display: grid;
   gap: 12px;
+}
+
+.main-menu-window {
+  position: relative;
+  width: min(1120px, 100%);
+  min-height: min(760px, calc(100vh - 28px));
+  overflow: hidden;
+  align-content: stretch;
+  padding: clamp(18px, 3vw, 38px);
+  border-color: rgba(255, 218, 103, 0.26);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 34%),
+    rgba(13, 14, 18, 0.76);
+  backdrop-filter: blur(18px);
+}
+
+.main-menu-window::before,
+.main-menu-window::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.main-menu-window::before {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.03) 50%, rgba(0, 0, 0, 0.03) 50%),
+    radial-gradient(circle at 50% 46%, transparent 56%, rgba(0, 0, 0, 0.45));
+  background-size: 100% 4px, 100% 100%;
+  z-index: 3;
+}
+
+.main-menu-window::after {
+  border: 1px solid rgba(255, 243, 110, 0.16);
+  box-shadow: inset 0 0 92px rgba(255, 218, 103, 0.08);
+  z-index: 4;
+}
+
+.main-menu-window > * {
+  position: relative;
+  z-index: 5;
+}
+
+.shop-menu-window {
+  width: min(860px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
 }
 
 .menu-title {
@@ -572,6 +654,274 @@ code {
   font-weight: 900;
 }
 
+.main-menu-window .menu-title {
+  align-items: start;
+}
+
+.main-menu-window .menu-title h2 {
+  max-width: 760px;
+  color: #fff7c7;
+  font-size: clamp(46px, 8vw, 96px);
+  line-height: 0.88;
+  text-transform: uppercase;
+  text-shadow: 0 8px 0 rgba(0, 0, 0, 0.28), 0 0 34px rgba(255, 218, 103, 0.2);
+}
+
+.main-menu-window .menu-title span {
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 218, 103, 0.32);
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.main-menu {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: minmax(320px, 1fr) auto auto;
+  gap: clamp(12px, 2vw, 20px);
+}
+
+.menu-art {
+  position: relative;
+  min-height: clamp(330px, 54vh, 520px);
+  overflow: hidden;
+  border: 1px solid rgba(255, 218, 103, 0.18);
+  background:
+    radial-gradient(circle at 76% 16%, rgba(255, 247, 168, 0.38), transparent 11rem),
+    linear-gradient(180deg, rgba(87, 213, 255, 0.3), rgba(255, 218, 103, 0.2) 48%, rgba(31, 26, 20, 0.94)),
+    #1f222b;
+  box-shadow: inset 0 -90px 90px rgba(0, 0, 0, 0.28);
+}
+
+.menu-art::before,
+.menu-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.menu-art::before {
+  background:
+    radial-gradient(ellipse at 22% 22%, rgba(255, 255, 255, 0.22), transparent 18rem),
+    linear-gradient(115deg, transparent 14%, rgba(255, 255, 255, 0.14) 15%, transparent 34%),
+    linear-gradient(105deg, transparent 44%, rgba(255, 247, 168, 0.12) 45%, transparent 68%);
+}
+
+.menu-art::after {
+  background:
+    radial-gradient(circle at 48% 55%, transparent 44%, rgba(0, 0, 0, 0.42)),
+    linear-gradient(rgba(255, 255, 255, 0.03) 50%, rgba(0, 0, 0, 0.03) 50%);
+  background-size: 100% 100%, 100% 4px;
+}
+
+.menu-art span {
+  position: absolute;
+  display: block;
+}
+
+.menu-sun {
+  right: 12%;
+  top: 9%;
+  width: 76px;
+  height: 76px;
+  background: #fff36e;
+  border-radius: 50%;
+  box-shadow: 0 0 72px rgba(255, 243, 110, 0.56);
+}
+
+.menu-pyramid {
+  bottom: 74px;
+  height: 190px;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.menu-pyramid-left {
+  left: 4%;
+  width: 310px;
+  background:
+    linear-gradient(112deg, rgba(255, 247, 168, 0.36) 0 43%, rgba(154, 91, 38, 0.2) 44%),
+    rgba(224, 173, 48, 0.78);
+}
+
+.menu-pyramid-right {
+  right: 5%;
+  width: 230px;
+  height: 150px;
+  background:
+    linear-gradient(112deg, rgba(255, 239, 142, 0.24) 0 46%, rgba(91, 51, 28, 0.22) 47%),
+    rgba(183, 120, 46, 0.62);
+}
+
+.menu-portal {
+  right: 13%;
+  bottom: 82px;
+  width: 78px;
+  height: 150px;
+  border: 12px solid #57d5ff;
+  background: rgba(87, 213, 255, 0.16);
+  border-radius: 50%;
+  box-shadow: inset 0 0 34px rgba(87, 213, 255, 0.54), 0 0 56px rgba(87, 213, 255, 0.4);
+}
+
+.menu-portal::before,
+.menu-portal::after {
+  content: "";
+  position: absolute;
+}
+
+.menu-portal::before {
+  inset: 17px 13px;
+  border: 4px solid rgba(159, 255, 234, 0.78);
+  border-radius: 50%;
+  box-shadow: inset 0 0 24px rgba(159, 255, 234, 0.35);
+}
+
+.menu-portal::after {
+  left: -34px;
+  right: -34px;
+  bottom: -22px;
+  height: 18px;
+  background: radial-gradient(ellipse, rgba(87, 213, 255, 0.42), transparent 70%);
+}
+
+.menu-player {
+  left: 26%;
+  bottom: 82px;
+  width: 54px;
+  height: 98px;
+  border-radius: 22px 22px 8px 8px;
+  background:
+    radial-gradient(circle at 50% 16%, #f2c28f 0 18%, transparent 19%),
+    linear-gradient(#0000 0 28%, #8fe0ff 29% 72%, #141419 73%);
+  box-shadow: -44px 34px 0 -19px #141419, 44px 32px 0 -22px #141419, 0 18px 34px rgba(0, 0, 0, 0.42);
+}
+
+.menu-player::before {
+  content: "";
+  position: absolute;
+  left: 44px;
+  top: 44px;
+  width: 74px;
+  height: 12px;
+  background: #fff36e;
+  box-shadow: 58px 0 0 #fff36e, 0 0 22px rgba(255, 243, 110, 0.4);
+}
+
+.menu-enemy {
+  width: 48px;
+  height: 48px;
+  background: #ff304d;
+  border-radius: 42% 42% 30% 30%;
+  box-shadow: inset 0 -10px 0 rgba(0, 0, 0, 0.18);
+}
+
+.menu-enemy::before,
+.menu-enemy::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  width: 6px;
+  height: 6px;
+  background: #141419;
+}
+
+.menu-enemy::before {
+  left: 7px;
+}
+
+.menu-enemy::after {
+  right: 7px;
+}
+
+.menu-enemy-one {
+  left: 11%;
+  bottom: 84px;
+}
+
+.menu-enemy-two {
+  right: 27%;
+  bottom: 84px;
+  background: #9a6cff;
+}
+
+.menu-ground {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 82px;
+  background:
+    radial-gradient(ellipse at 18% 16%, rgba(255, 247, 168, 0.18), transparent 12rem),
+    radial-gradient(ellipse at 72% 30%, rgba(91, 52, 26, 0.28), transparent 14rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 9px),
+    repeating-linear-gradient(105deg, rgba(255, 218, 103, 0.18) 0 16px, transparent 16px 46px),
+    #8a5b2c;
+}
+
+.menu-copy {
+  display: grid;
+  gap: 4px;
+  max-width: 620px;
+  padding: 2px 0 4px;
+}
+
+.menu-copy strong {
+  color: #fff36e;
+  font-size: clamp(24px, 3vw, 38px);
+}
+
+.menu-copy span {
+  color: #c7c2af;
+  font-size: clamp(15px, 1.8vw, 19px);
+  line-height: 1.35;
+}
+
+.main-menu-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 220px));
+  gap: 10px;
+}
+
+.main-menu-actions button {
+  min-height: 56px;
+  border-color: rgba(255, 243, 110, 0.4);
+  font-size: 18px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+}
+
+.shop-content {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.shop-department {
+  display: grid;
+  gap: 10px;
+  min-height: 100%;
+  padding: 12px;
+  border: 1px solid rgba(255, 218, 103, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 218, 103, 0.08), transparent 90px),
+    rgba(32, 32, 40, 0.7);
+}
+
+.shop-department h3 {
+  margin: 0;
+  color: #ffda67;
+  font-size: 16px;
+  text-transform: uppercase;
+}
+
+.shop-empty {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px dashed rgba(244, 240, 223, 0.22);
+  background: rgba(12, 12, 16, 0.22);
+  color: #c7c2af;
+}
+
 .shop-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -590,6 +940,30 @@ code {
 .shop-row span {
   color: #c7c2af;
   font-size: 14px;
+}
+
+.race-row {
+  grid-template-columns: 1fr;
+}
+
+.race-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.race-button {
+  min-height: 38px;
+  border: 2px solid rgba(244, 240, 223, 0.24);
+  background: #282832;
+  color: #f4f0df;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.race-button.active {
+  background: #fff36e;
+  color: #141414;
 }
 
 .swatches {
@@ -622,10 +996,6 @@ code {
   .game-shell {
     grid-template-columns: 1fr;
     padding: 12px;
-  }
-
-  .game-panel {
-    order: -1;
   }
 
   .auth-panel {
@@ -678,6 +1048,78 @@ code {
 @media (max-width: 540px) {
   .game-shell {
     padding: 8px;
+  }
+
+  .main-overlay {
+    padding: 8px;
+  }
+
+  .main-menu-window {
+    min-height: calc(100dvh - 16px);
+    padding: 16px;
+  }
+
+  .main-menu-window .menu-title {
+    align-items: center;
+  }
+
+  .main-menu-window .menu-title h2 {
+    font-size: 42px;
+  }
+
+  .main-menu-window .menu-title span {
+    font-size: 12px;
+    padding: 7px 8px;
+  }
+
+  .main-menu {
+    grid-template-rows: minmax(280px, 1fr) auto auto;
+  }
+
+  .menu-art {
+    min-height: 300px;
+  }
+
+  .menu-pyramid-left {
+    left: -36%;
+  }
+
+  .menu-pyramid-right {
+    right: -24%;
+  }
+
+  .menu-player {
+    left: 22%;
+    transform: scale(0.82);
+    transform-origin: bottom center;
+  }
+
+  .menu-portal {
+    right: 7%;
+    transform: scale(0.82);
+    transform-origin: bottom center;
+  }
+
+  .menu-enemy-two {
+    right: 33%;
+  }
+
+  .main-menu-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .shop-menu-window {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+  }
+
+  .shop-content {
+    grid-template-columns: 1fr;
+  }
+
+  .race-grid,
+  .swatches {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .game-panel {

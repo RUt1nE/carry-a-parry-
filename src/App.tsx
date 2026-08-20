@@ -5,6 +5,22 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 type Keys = Record<string, boolean>;
 
 type SkinId = 'default' | 'jotaro' | 'giorno' | 'pucci' | 'dio';
+type RaceId = 'human' | 'fish' | 'rabbit' | 'ghoul' | 'angel' | 'cyborg' | 'dragon';
+type RaceVersion = 1 | 2 | 3 | 4;
+type CorpseParts = {
+  heart: boolean;
+  lung: boolean;
+  brain: boolean;
+};
+type RaceVersions = Record<RaceId, RaceVersion>;
+type RaceQuestStats = {
+  humanClearedTime: number;
+  angelJumps: number;
+  cyborgBosses: number;
+  fishDamage: number;
+  ghoulHealed: number;
+  dragonFlame: number;
+};
 
 type Zombie = {
   x: number;
@@ -21,6 +37,7 @@ type Zombie = {
   specialCounter: number;
   specialDirection?: 'up' | 'down';
   specialVulnerable: boolean;
+  corpsePartDropped: boolean;
   kind: 'crawler' | 'runner' | 'brute' | 'shooter' | 'boss';
 };
 
@@ -41,7 +58,7 @@ type Projectile = {
   life: number;
   damage: number;
   size: number;
-  kind: 'star' | 'boulder' | 'acid' | 'acidStar' | 'neonBeam' | 'iceSpear' | 'iceSpike' | 'sandGeyser';
+  kind: 'star' | 'boulder' | 'acid' | 'acidStar' | 'neonBeam' | 'iceSpear' | 'iceSpike' | 'sandGeyser' | 'geyserStar';
   targetX?: number;
   targetY?: number;
   target?: 'player' | 'cart';
@@ -66,6 +83,12 @@ type GameAccount = {
   defeatedFinalBoss: boolean;
   activeSkin: SkinId;
   unlockedSkins: SkinId[];
+  activeRace: RaceId;
+  activeRaceVersion: RaceVersion;
+  raceVersions: RaceVersions;
+  unlockedRaces: RaceId[];
+  corpseParts: CorpseParts;
+  raceQuestStats: RaceQuestStats;
   provider?: 'local' | 'google';
 };
 
@@ -94,6 +117,19 @@ const skins: Array<{ id: SkinId; name: string; stand: string; cost: number; body
   { id: 'pucci', name: 'Enrico Pucci', stand: 'Made in Heaven', cost: 300, body: '#f7f3df', coat: '#202028', standColor: '#d9f7ff' },
   { id: 'dio', name: 'DIO', stand: 'Za Warudo', cost: 400, body: '#f5c842', coat: '#101014', standColor: '#d6b84c' },
 ];
+const races: Array<{ id: RaceId; name: string; hint: string; color: string }> = [
+  { id: 'human', name: 'Человек', hint: '+20% урон парированием', color: '#f2c28f' },
+  { id: 'fish', name: 'Шарк', hint: '-1 урон от попаданий', color: '#57d5ff' },
+  { id: 'rabbit', name: 'Кролик', hint: 'быстрее бег и выше прыжок', color: '#f7f0df' },
+  { id: 'ghoul', name: 'Гуль', hint: 'лечится от идеального парирования', color: '#9b6dff' },
+  { id: 'angel', name: 'Ангел', hint: 'медленно регенит HP', color: '#fff36e' },
+  { id: 'cyborg', name: 'Киборг', hint: 'больше радиус парирования', color: '#80ff9e' },
+  { id: 'dragon', name: 'Дракон', hint: 'сильнее огнемет', color: '#ff7a3d' },
+];
+const starterRaces: RaceId[] = ['human', 'fish', 'rabbit', 'angel'];
+const emptyCorpseParts: CorpseParts = { heart: false, lung: false, brain: false };
+const baseRaceVersions: RaceVersions = { human: 1, fish: 1, rabbit: 1, ghoul: 1, angel: 1, cyborg: 1, dragon: 1 };
+const emptyRaceQuestStats: RaceQuestStats = { humanClearedTime: 0, angelJumps: 0, cyborgBosses: 0, fishDamage: 0, ghoulHealed: 0, dragonFlame: 0 };
 const chapterPalettes = [
   { sky: '#102236', far: '#2b4152', mid: '#4c3c4d', ground: '#6f5d46', accent: '#ffda67', hazard: '#d55b42' },
   { sky: '#13251c', far: '#27533d', mid: '#3b4b66', ground: '#40523a', accent: '#80ff9e', hazard: '#9cff57' },
@@ -105,7 +141,7 @@ const ACCOUNTS_KEY = 'carry-a-parry-accounts';
 
 const locations = [
   {
-    name: 'Scrapyard',
+    name: 'Rock Ruins',
     sky: '#102236',
     far: '#2b4152',
     mid: '#4c3c4d',
@@ -115,7 +151,7 @@ const locations = [
     decor: 'cranes',
   },
   {
-    name: 'Toxic Alley',
+    name: 'Toxic City',
     sky: '#13251c',
     far: '#27533d',
     mid: '#3b4b66',
@@ -125,7 +161,7 @@ const locations = [
     decor: 'pipes',
   },
   {
-    name: 'Neon Ruins',
+    name: 'Cyberpunk City',
     sky: '#1b1531',
     far: '#40295d',
     mid: '#1f5b73',
@@ -135,7 +171,7 @@ const locations = [
     decor: 'signs',
   },
   {
-    name: 'Snow Pass',
+    name: 'Igloo Village',
     sky: '#d8efff',
     far: '#9bbfd3',
     mid: '#6f8fa4',
@@ -145,7 +181,7 @@ const locations = [
     decor: 'snow',
   },
   {
-    name: 'Desert Wind',
+    name: 'Desert Temples',
     sky: '#ffe16a',
     far: '#e0b63a',
     mid: '#c7962a',
@@ -162,6 +198,10 @@ function clamp(value: number, min: number, max: number) {
 
 function chapterPalette(room: number) {
   return chapterPalettes[clamp(Math.floor((room - 1) / 5), 0, chapterPalettes.length - 1)];
+}
+
+function chapterLocationIndex(room: number) {
+  return clamp(Math.floor((room - 1) / 5), 0, locations.length - 1);
 }
 
 function isShopRoom(room: number) {
@@ -208,6 +248,10 @@ function safeCheckpointRoom(checkpointRoom: number | undefined, currentRoom: num
 
 function displayRoom(room: number) {
   return Number.isInteger(room) ? String(room) : room.toFixed(1);
+}
+
+function racePower(version: RaceVersion) {
+  return 1 + (version - 1) * 0.35;
 }
 
 function rectsOverlap(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) {
@@ -276,22 +320,33 @@ function readAccounts(): GameAccount[] {
     const accounts = JSON.parse(localStorage.getItem(ACCOUNTS_KEY) ?? '[]') as Partial<GameAccount>[];
     return accounts
       .filter((account): account is Partial<GameAccount> & { username: string } => Boolean(account.username))
-      .map((account) => ({
-        username: account.username,
-        password: account.password,
-        role: account.role === 'admin' ? 'admin' : 'player',
-        parts: account.parts ?? 0,
-        radiusLevel: account.radiusLevel ?? 0,
-        parryColor: account.parryColor ?? parryColors[0].color,
-        unlockedColors: account.unlockedColors?.length ? account.unlockedColors : [parryColors[0].color],
-        hasShotgun: account.hasShotgun ?? false,
-        savedRoom: account.savedRoom ?? 1,
-        ambushDefeated: account.ambushDefeated ?? false,
-        defeatedFinalBoss: account.defeatedFinalBoss ?? false,
-        activeSkin: account.activeSkin ?? 'default',
-        unlockedSkins: account.unlockedSkins?.length ? account.unlockedSkins as SkinId[] : ['default'],
-        provider: account.provider ?? 'local',
-      }));
+      .map((account) => {
+        const activeRace = account.activeRace ?? 'human';
+        const legacyVersion = account.activeRaceVersion ?? 1;
+        const raceVersions = { ...baseRaceVersions, ...account.raceVersions, [activeRace]: account.raceVersions?.[activeRace] ?? legacyVersion };
+        return {
+          username: account.username,
+          password: account.password,
+          role: account.role === 'admin' ? 'admin' : 'player',
+          parts: account.parts ?? 0,
+          radiusLevel: account.radiusLevel ?? 0,
+          parryColor: account.parryColor ?? parryColors[0].color,
+          unlockedColors: account.unlockedColors?.length ? account.unlockedColors : [parryColors[0].color],
+          hasShotgun: account.hasShotgun ?? false,
+          savedRoom: account.savedRoom ?? 1,
+          ambushDefeated: account.ambushDefeated ?? false,
+          defeatedFinalBoss: account.defeatedFinalBoss ?? false,
+          activeSkin: account.activeSkin ?? 'default',
+          unlockedSkins: account.unlockedSkins?.length ? account.unlockedSkins as SkinId[] : ['default'],
+          activeRace,
+          activeRaceVersion: raceVersions[activeRace],
+          raceVersions,
+          unlockedRaces: account.unlockedRaces?.length ? account.unlockedRaces as RaceId[] : starterRaces,
+          corpseParts: { ...emptyCorpseParts, ...account.corpseParts },
+          raceQuestStats: { ...emptyRaceQuestStats, ...account.raceQuestStats },
+          provider: account.provider ?? 'local',
+        };
+      });
   } catch {
     return [];
   }
@@ -330,6 +385,7 @@ function createZombie(kind: Zombie['kind'], x: number, room: number, index = 0):
     specialCounter: 0,
     specialDirection: undefined,
     specialVulnerable: false,
+    corpsePartDropped: false,
     kind,
   };
 }
@@ -381,6 +437,7 @@ export default function App() {
     hasShotgun: false,
     flameTimer: 0,
     flameCooldown: 0,
+    raceRegenTimer: 0,
     snowCutscene: 'none' as 'none' | 'walk' | 'fall' | 'warning',
     snowCutsceneTimer: 0,
     frostVictoryCutscene: 'none' as 'none' | 'rise' | 'returned',
@@ -391,6 +448,12 @@ export default function App() {
     defeatedFinalBoss: false,
     activeSkin: 'default' as SkinId,
     unlockedSkins: ['default'] as SkinId[],
+    activeRace: 'human' as RaceId,
+    activeRaceVersion: 1 as RaceVersion,
+    raceVersions: { ...baseRaceVersions },
+    unlockedRaces: [...starterRaces],
+    corpseParts: { ...emptyCorpseParts },
+    raceQuestStats: { ...emptyRaceQuestStats },
     roomRewarded: false,
     showHitboxes: false,
     freezeMobs: false,
@@ -411,6 +474,12 @@ export default function App() {
     parryColor: parryColors[0].color,
     hasShotgun: false,
     activeSkin: 'default' as SkinId,
+    activeRace: 'human' as RaceId,
+    activeRaceVersion: 1 as RaceVersion,
+    raceVersions: { ...baseRaceVersions },
+    unlockedRaces: [...starterRaces],
+    corpseParts: { ...emptyCorpseParts },
+    raceQuestStats: { ...emptyRaceQuestStats },
     defeatedFinalBoss: false,
     showHitboxes: false,
     freezeMobs: false,
@@ -452,6 +521,12 @@ export default function App() {
 		          defeatedFinalBoss: gameRef.current.defeatedFinalBoss,
 		          activeSkin: gameRef.current.activeSkin,
 		          unlockedSkins: gameRef.current.unlockedSkins,
+		          activeRace: gameRef.current.activeRace,
+		          activeRaceVersion: gameRef.current.activeRaceVersion,
+		          raceVersions: gameRef.current.raceVersions,
+		          unlockedRaces: gameRef.current.unlockedRaces,
+		          corpseParts: gameRef.current.corpseParts,
+		          raceQuestStats: gameRef.current.raceQuestStats,
 		          provider: 'google',
 	        };
         writeAccounts([...accounts, account]);
@@ -482,6 +557,12 @@ export default function App() {
 		          defeatedFinalBoss: gameRef.current.defeatedFinalBoss,
 		          activeSkin: gameRef.current.activeSkin,
 		          unlockedSkins: gameRef.current.unlockedSkins,
+		          activeRace: gameRef.current.activeRace,
+		          activeRaceVersion: gameRef.current.activeRaceVersion,
+		          raceVersions: gameRef.current.raceVersions,
+		          unlockedRaces: gameRef.current.unlockedRaces,
+		          corpseParts: gameRef.current.corpseParts,
+		          raceQuestStats: gameRef.current.raceQuestStats,
 		          provider: 'google',
 	        };
         writeAccounts([...accounts, account]);
@@ -523,6 +604,12 @@ export default function App() {
 		              defeatedFinalBoss: game.defeatedFinalBoss,
 		              activeSkin: game.activeSkin,
 		              unlockedSkins: game.unlockedSkins,
+		              activeRace: game.activeRace,
+		              activeRaceVersion: game.activeRaceVersion,
+		              raceVersions: game.raceVersions,
+		              unlockedRaces: game.unlockedRaces,
+		              corpseParts: game.corpseParts,
+		              raceQuestStats: game.raceQuestStats,
 		            }
           : account,
       ),
@@ -541,15 +628,22 @@ export default function App() {
     game.defeatedFinalBoss = account.defeatedFinalBoss;
     game.activeSkin = account.activeSkin;
     game.unlockedSkins = account.unlockedSkins;
+    game.activeRace = account.activeRace;
+    game.activeRaceVersion = account.activeRaceVersion;
+    game.raceVersions = account.raceVersions;
+    game.unlockedRaces = account.unlockedRaces;
+    game.corpseParts = account.corpseParts;
+    game.raceQuestStats = account.raceQuestStats;
     game.room = room;
     game.checkpointRoom = room;
-    game.location = (Math.floor(room) - 1) % locations.length;
+    game.location = chapterLocationIndex(room);
     game.player = { x: 170, y: GROUND - PLAYER_H, vx: 0, vy: 0, facing: 1, hp: 6, invuln: 0, crouching: false };
     game.cart = { x: 78, y: GROUND - 45, vx: 0, hp: 8, maxHp: 8, invuln: 0 };
     game.zombies = spawnZombies(game.location, game.room);
     game.projectiles = [];
     game.sparks = [];
     game.roomRewarded = false;
+    game.raceRegenTimer = 0;
     game.snowCutscene = 'none';
     game.snowCutsceneTimer = 0;
     game.frostVictoryCutscene = 'none';
@@ -565,6 +659,12 @@ export default function App() {
       parryColor: account.parryColor,
       hasShotgun: account.hasShotgun,
       activeSkin: account.activeSkin,
+      activeRace: account.activeRace,
+      activeRaceVersion: account.activeRaceVersion,
+      raceVersions: account.raceVersions,
+      unlockedRaces: account.unlockedRaces,
+      corpseParts: account.corpseParts,
+      raceQuestStats: account.raceQuestStats,
       defeatedFinalBoss: account.defeatedFinalBoss,
       room: game.room,
       location: locations[game.location].name,
@@ -656,6 +756,72 @@ export default function App() {
     setHud((current) => ({ ...current, coins: game.coins, activeSkin: skinId }));
   };
 
+  const chooseRace = (raceId: RaceId) => {
+    const game = gameRef.current;
+    if (!game.unlockedRaces.includes(raceId)) {
+      game.message = raceId === 'cyborg' ? 'Киборг спрятан после первого босса.' : 'Гуль спрятан после второго босса.';
+      game.messageTimer = 1.5;
+      setHud((current) => ({ ...current, message: game.message }));
+      return;
+    }
+    game.activeRace = raceId;
+    game.activeRaceVersion = game.raceVersions[raceId] ?? 1;
+    game.message = `Раса выбрана: ${races.find((race) => race.id === raceId)?.name ?? 'герой'} V${game.activeRaceVersion}.`;
+    game.messageTimer = 1.2;
+    saveProgress(profile?.accountId ?? profile?.username);
+    setHud((current) => ({ ...current, activeRace: raceId, activeRaceVersion: game.activeRaceVersion, message: game.message }));
+  };
+
+  const unlockRace = (raceId: RaceId) => {
+    const game = gameRef.current;
+    if (game.unlockedRaces.includes(raceId)) return;
+    game.unlockedRaces.push(raceId);
+    game.raceVersions[raceId] = game.raceVersions[raceId] ?? 1;
+    game.message = `Секретная раса открыта: ${races.find((race) => race.id === raceId)?.name}. Выбери ее в Race.`;
+    game.messageTimer = 2;
+    saveProgress(profile?.accountId ?? profile?.username);
+    setHud((current) => ({
+      ...current,
+      raceVersions: game.raceVersions,
+      unlockedRaces: game.unlockedRaces,
+      message: game.message,
+    }));
+  };
+
+  const completeRaceV3 = (raceId: RaceId) => {
+    const game = gameRef.current;
+    if (game.activeRace !== raceId || game.activeRaceVersion !== 2) return;
+    game.raceVersions[raceId] = 3;
+    game.activeRaceVersion = 3;
+    game.message = `${races.find((race) => race.id === raceId)?.name ?? 'Раса'} V3 получена!`;
+    game.messageTimer = 2.2;
+    saveProgress(profile?.accountId ?? profile?.username);
+    setHud((current) => ({ ...current, activeRaceVersion: 3, raceVersions: game.raceVersions, raceQuestStats: game.raceQuestStats, hp: game.player.hp, message: game.message }));
+  };
+
+  const upgradeRaceV2 = () => {
+    const game = gameRef.current;
+    const hasParts = game.corpseParts.heart && game.corpseParts.lung && game.corpseParts.brain;
+    if (game.activeRaceVersion >= 2) {
+      game.message = 'Алхимик: твоя раса уже V2.';
+    } else if (!hasParts) {
+      game.message = 'Алхимик: принеси сердце, легкое и мозг зомби.';
+    } else if (game.coins < 20) {
+      game.message = 'Алхимик: нужно 20 parts.';
+    } else {
+      game.coins -= 20;
+      game.activeRaceVersion = 2;
+      game.raceVersions[game.activeRace] = 2;
+      game.corpseParts = { ...emptyCorpseParts };
+      game.message = 'Алхимик сделал расу V2. Баффы усилены.';
+      saveProgress(profile?.accountId ?? profile?.username);
+      setHud((current) => ({ ...current, coins: game.coins, activeRaceVersion: 2, raceVersions: game.raceVersions, corpseParts: game.corpseParts, message: game.message }));
+      return;
+    }
+    game.messageTimer = 1.8;
+    setHud((current) => ({ ...current, message: game.message }));
+  };
+
   const adminHeal = () => {
     const game = gameRef.current;
     game.player.hp = 6;
@@ -702,7 +868,7 @@ export default function App() {
     const room = clamp(Math.round(roomValue * 2) / 2, 1, FINAL_ROOM);
     const game = gameRef.current;
     game.room = room;
-    game.location = (Math.floor(room) - 1) % locations.length;
+    game.location = chapterLocationIndex(room);
     game.checkpointRoom = chapterStartRoom(room);
     game.player = { x: 170, y: GROUND - PLAYER_H, vx: 0, vy: 0, facing: 1, hp: 6, invuln: 0, crouching: false };
     game.cart = { x: 78, y: GROUND - 45, vx: 0, hp: 8, maxHp: 8, invuln: 0 };
@@ -713,6 +879,7 @@ export default function App() {
     game.parryCooldown = 0;
     game.flameTimer = 0;
     game.flameCooldown = 0;
+    game.raceRegenTimer = 0;
     game.snowCutscene = 'none';
     game.snowCutsceneTimer = 0;
     game.frostVictoryCutscene = 'none';
@@ -784,6 +951,12 @@ export default function App() {
         defeatedFinalBoss: gameRef.current.defeatedFinalBoss,
         activeSkin: gameRef.current.activeSkin,
         unlockedSkins: gameRef.current.unlockedSkins,
+        activeRace: gameRef.current.activeRace,
+        activeRaceVersion: gameRef.current.activeRaceVersion,
+        raceVersions: gameRef.current.raceVersions,
+        unlockedRaces: gameRef.current.unlockedRaces,
+        corpseParts: gameRef.current.corpseParts,
+        raceQuestStats: gameRef.current.raceQuestStats,
       };
       writeAccounts([...accounts, account]);
       setProfile({ username, role: 'player' });
@@ -883,7 +1056,7 @@ export default function App() {
       if (game.room === 21) {
         game.dioQuestRooms = [];
       }
-      game.location = (Math.floor(game.room) - 1) % locations.length;
+      game.location = chapterLocationIndex(game.room);
       game.player.x = 130;
       game.cart.x = 40;
       if (hasCart(game.room)) {
@@ -930,44 +1103,118 @@ export default function App() {
     const drawBossLayout = (room: number, time: number) => {
       const bossIndex = Math.floor(room / 5);
       const palette = chapterPalette(room);
-      ctx.fillStyle = palette.hazard;
-      ctx.globalAlpha = 0.88;
+      ctx.globalAlpha = 0.9;
 
       if (bossIndex === 1) {
-        for (const x of [130, 300, 610, 780]) {
-          ctx.fillRect(x, GROUND - 172, 24, 172);
-          ctx.fillRect(x - 18, GROUND - 178, 60, 10);
-        }
-      } else if (bossIndex === 2) {
-        for (const x of [105, 255, 405, 555, 705]) {
-          ctx.fillRect(x, GROUND - 235, 110, 10);
-          ctx.fillRect(x + 14, GROUND - 235, 8, 150);
-          ctx.fillRect(x + 88, GROUND - 235, 8, 150);
-        }
-      } else if (bossIndex === 3) {
-        for (let i = 0; i < 6; i += 1) {
-          const x = 70 + i * 155;
-          ctx.fillRect(x, GROUND - 76 - (i % 2) * 48, 112, 14);
-          ctx.fillRect(x + 92, GROUND - 132 - (i % 2) * 48, 18, 70);
-          ctx.fillRect(x + 10, GROUND - 210, 12, 92);
-        }
-      } else if (bossIndex === 4) {
-        for (const x of [85, 180, 345, 510, 675, 810]) {
+        ctx.fillStyle = '#5f4b3f';
+        for (const x of [82, 210, 660, 802]) {
           ctx.beginPath();
           ctx.moveTo(x, GROUND);
-          ctx.lineTo(x + 35, GROUND - 82);
-          ctx.lineTo(x + 70, GROUND);
+          ctx.lineTo(x + 18, GROUND - 158);
+          ctx.lineTo(x + 62, GROUND - 178);
+          ctx.lineTo(x + 96, GROUND - 132);
+          ctx.lineTo(x + 112, GROUND);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = '#8b735d';
+          ctx.fillRect(x + 24, GROUND - 130, 56, 13);
+          ctx.fillRect(x + 34, GROUND - 112, 34, 112);
+          ctx.fillStyle = '#5f4b3f';
+        }
+        ctx.strokeStyle = 'rgba(255, 218, 103, 0.34)';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(WIDTH / 2 - 120, GROUND - 198, 240, 132);
+        ctx.fillStyle = 'rgba(255, 218, 103, 0.18)';
+        ctx.fillRect(WIDTH / 2 - 88, GROUND - 156, 176, 90);
+      } else if (bossIndex === 2) {
+        ctx.fillStyle = '#1b332b';
+        for (const x of [48, 188, 640, 792]) {
+          ctx.beginPath();
+          ctx.roundRect(x, GROUND - 206, 94, 206, 8);
+          ctx.fill();
+          ctx.fillStyle = 'rgba(128, 255, 158, 0.54)';
+          ctx.beginPath();
+          ctx.ellipse(x + 48, GROUND - 226, 42, 12, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillRect(x + 18, GROUND - 168, 58, 9);
+          ctx.fillStyle = '#1b332b';
+        }
+        ctx.strokeStyle = 'rgba(128, 255, 158, 0.52)';
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(118, GROUND - 70);
+        ctx.bezierCurveTo(250, GROUND - 224, 420, GROUND - 38, 612, GROUND - 176);
+        ctx.bezierCurveTo(700, GROUND - 238, 804, GROUND - 128, 884, GROUND - 204);
+        ctx.stroke();
+      } else if (bossIndex === 3) {
+        for (let i = 0; i < 8; i += 1) {
+          const x = 22 + i * 126;
+          const h = 138 + (i % 4) * 34;
+          ctx.fillStyle = i % 2 === 0 ? '#182848' : '#221b4d';
+          ctx.beginPath();
+          ctx.roundRect(x, GROUND - h, 82, h, 5);
+          ctx.fill();
+          ctx.fillStyle = i % 2 === 0 ? '#57d5ff' : '#ff65d8';
+          ctx.globalAlpha = 0.7;
+          ctx.fillRect(x + 14, GROUND - h + 24, 50, 7);
+          ctx.fillRect(x + 22, GROUND - h + 58, 36, 7);
+          ctx.fillRect(x + 8, GROUND - h + 92, 62, 6);
+          ctx.globalAlpha = 0.9;
+        }
+        ctx.strokeStyle = 'rgba(255, 101, 216, 0.58)';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(80, GROUND - 210);
+        ctx.lineTo(340, GROUND - 154);
+        ctx.lineTo(610, GROUND - 230);
+        ctx.lineTo(900, GROUND - 168);
+        ctx.stroke();
+      } else if (bossIndex === 4) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.86)';
+        for (const x of [58, 178, 684, 808]) {
+          ctx.beginPath();
+          ctx.arc(x + 42, GROUND - 18, 52, Math.PI, Math.PI * 2);
+          ctx.lineTo(x + 94, GROUND - 18);
+          ctx.lineTo(x - 10, GROUND - 18);
           ctx.closePath();
           ctx.fill();
         }
+        ctx.strokeStyle = 'rgba(87, 213, 255, 0.6)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.ellipse(WIDTH / 2, GROUND - 72, 210, 58, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(87, 213, 255, 0.18)';
+        ctx.beginPath();
+        ctx.ellipse(WIDTH / 2, GROUND - 72, 170, 38, 0, 0, Math.PI * 2);
+        ctx.fill();
       } else {
-        for (let i = 0; i < 9; i += 1) {
-          const angle = (Math.PI * 2 * i) / 9 + time * 0.0004;
-          const x = WIDTH / 2 + Math.cos(angle) * 320;
-          const y = GROUND - 125 + Math.sin(angle) * 48;
-          ctx.fillRect(x - 13, y - 45, 26, 90);
-          ctx.fillRect(x - 36, y - 52, 72, 11);
+        ctx.fillStyle = 'rgba(224, 173, 48, 0.76)';
+        for (const x of [70, 760]) {
+          ctx.beginPath();
+          ctx.moveTo(x - 50, GROUND - 24);
+          ctx.lineTo(x + 58, GROUND - 214);
+          ctx.lineTo(x + 166, GROUND - 24);
+          ctx.closePath();
+          ctx.fill();
         }
+        ctx.fillStyle = 'rgba(129, 78, 35, 0.8)';
+        ctx.fillRect(WIDTH / 2 - 136, GROUND - 112, 272, 112);
+        ctx.beginPath();
+        ctx.moveTo(WIDTH / 2 - 168, GROUND - 112);
+        ctx.lineTo(WIDTH / 2, GROUND - 206);
+        ctx.lineTo(WIDTH / 2 + 168, GROUND - 112);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255, 247, 168, 0.48)';
+        for (let i = 0; i < 5; i += 1) {
+          ctx.fillRect(WIDTH / 2 - 112 + i * 56, GROUND - 82, 22, 82);
+        }
+        ctx.strokeStyle = palette.accent;
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(WIDTH / 2, GROUND - 212, 36 + Math.sin(time * 0.003) * 4, 0, Math.PI * 2);
+        ctx.stroke();
       }
 
       ctx.globalAlpha = 1;
@@ -985,59 +1232,227 @@ export default function App() {
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-      ctx.fillStyle = loc.far;
-      for (let i = 0; i < 9; i += 1) {
-        const x = i * 132 - ((time * 0.012) % 132);
-        const h = 90 + ((i * 37) % 86);
-        ctx.fillRect(x, GROUND - 130 - h * 0.25, 76, h);
-        ctx.fillRect(x + 38, GROUND - 170 - h * 0.2, 54, h + 42);
-      }
-
-      ctx.fillStyle = loc.mid;
-      for (let i = 0; i < 7; i += 1) {
-        const x = i * 168 - ((time * 0.025) % 168);
+      const drawRidge = (color: string, y: number, height: number, speed: number, alpha: number) => {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.moveTo(x, GROUND);
-        ctx.lineTo(x + 58, GROUND - 115 - (i % 3) * 18);
-        ctx.lineTo(x + 118, GROUND);
+        ctx.moveTo(-80, GROUND);
+        for (let i = -1; i <= 8; i += 1) {
+          const x = i * 150 - ((time * speed) % 150);
+          const peak = y - ((i * 37) % height);
+          ctx.quadraticCurveTo(x + 58, peak - height * 0.45, x + 150, y + ((i % 2) * 18));
+        }
+        ctx.lineTo(WIDTH + 90, GROUND);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      };
+
+      drawRidge(loc.far, GROUND - 104, 78, 0.01, 0.82);
+      drawRidge(loc.mid, GROUND - 54, 58, 0.018, 0.72);
+
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = '#ffffff';
+      for (let i = 0; i < 8; i += 1) {
+        const x = (i * 156 + time * 0.008) % (WIDTH + 140) - 120;
+        const y = 42 + (i % 3) * 34;
+        ctx.beginPath();
+        ctx.ellipse(x, y, 54, 16, 0, 0, Math.PI * 2);
+        ctx.ellipse(x + 42, y + 4, 44, 13, 0, 0, Math.PI * 2);
+        ctx.ellipse(x - 38, y + 7, 36, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      ctx.globalAlpha = 0.36;
+      ctx.fillStyle = loc.accent;
+      for (let i = 0; i < 5; i += 1) {
+        const x = i * 235 - ((time * 0.015) % 235);
+        ctx.beginPath();
+        ctx.moveTo(x - 70, GROUND - 26);
+        ctx.quadraticCurveTo(x + 52, GROUND - 112 - (i % 2) * 18, x + 250, GROUND - 18);
+        ctx.lineTo(x + 250, GROUND + 12);
+        ctx.lineTo(x - 70, GROUND + 12);
         ctx.closePath();
         ctx.fill();
       }
+      ctx.globalAlpha = 1;
 
-      ctx.fillStyle = loc.hazard;
       ctx.globalAlpha = 0.78;
+      const drawRockRuins = () => {
+        ctx.fillStyle = '#5f4b3f';
+        for (let i = 0; i < 6; i += 1) {
+          const x = 42 + i * 164;
+          const top = GROUND - 86 - (i % 3) * 34;
+          ctx.beginPath();
+          ctx.moveTo(x, GROUND);
+          ctx.lineTo(x + 18, top + 18);
+          ctx.lineTo(x + 54, top);
+          ctx.lineTo(x + 94, top + 28);
+          ctx.lineTo(x + 112, GROUND);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = '#8b735d';
+          ctx.fillRect(x + 24, top + 38, 54, 12);
+          ctx.fillRect(x + 34, top + 54, 34, GROUND - top - 54);
+          ctx.fillStyle = '#5f4b3f';
+        }
+        ctx.strokeStyle = 'rgba(255, 218, 103, 0.3)';
+        ctx.lineWidth = 3;
+        for (let i = 0; i < 5; i += 1) {
+          const x = 96 + i * 178;
+          ctx.beginPath();
+          ctx.moveTo(x, GROUND - 140);
+          ctx.lineTo(x + 34, GROUND - 112);
+          ctx.lineTo(x + 8, GROUND - 84);
+          ctx.stroke();
+        }
+      };
+
+      const drawToxicCity = () => {
+        for (let i = 0; i < 7; i += 1) {
+          const x = -12 + i * 148;
+          const h = 108 + (i % 4) * 32;
+          ctx.fillStyle = i % 2 === 0 ? '#233d35' : '#1b332b';
+          ctx.beginPath();
+          ctx.roundRect(x, GROUND - h, 86, h, 7);
+          ctx.fill();
+          ctx.fillStyle = 'rgba(128, 255, 158, 0.5)';
+          for (let row = 0; row < 4; row += 1) {
+            ctx.fillRect(x + 14 + (row % 2) * 18, GROUND - h + 22 + row * 24, 12, 8);
+            ctx.fillRect(x + 50, GROUND - h + 28 + row * 24, 10, 7);
+          }
+          ctx.fillStyle = 'rgba(97, 255, 120, 0.28)';
+          ctx.beginPath();
+          ctx.ellipse(x + 48, GROUND - h - 18, 36, 10, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.strokeStyle = 'rgba(128, 255, 158, 0.48)';
+        ctx.lineWidth = 7;
+        for (let i = 0; i < 4; i += 1) {
+          const x = 46 + i * 238;
+          ctx.beginPath();
+          ctx.moveTo(x, GROUND - 38);
+          ctx.bezierCurveTo(x + 60, GROUND - 114, x + 122, GROUND - 20, x + 190, GROUND - 86);
+          ctx.stroke();
+        }
+      };
+
+      const drawCyberCity = () => {
+        for (let i = 0; i < 9; i += 1) {
+          const x = i * 118 - 34;
+          const h = 128 + (i % 5) * 28;
+          ctx.fillStyle = i % 2 === 0 ? '#182848' : '#221b4d';
+          ctx.beginPath();
+          ctx.roundRect(x, GROUND - h, 76, h, 4);
+          ctx.fill();
+          ctx.fillStyle = i % 3 === 0 ? '#57d5ff' : '#ff65d8';
+          ctx.globalAlpha = 0.58;
+          for (let row = 0; row < 5; row += 1) {
+            ctx.fillRect(x + 12, GROUND - h + 18 + row * 22, 22, 5);
+            ctx.fillRect(x + 44, GROUND - h + 25 + row * 22, 14, 5);
+          }
+          ctx.globalAlpha = 0.78;
+        }
+        ctx.strokeStyle = 'rgba(87, 213, 255, 0.5)';
+        ctx.lineWidth = 3;
+        for (let i = 0; i < 5; i += 1) {
+          const y = GROUND - 190 + i * 28;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(WIDTH, y - 38 + (i % 2) * 56);
+          ctx.stroke();
+        }
+      };
+
+      const drawIglooVillage = () => {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.86)';
+        for (let i = 0; i < 6; i += 1) {
+          const x = 38 + i * 158;
+          const y = GROUND - 42 - (i % 2) * 14;
+          ctx.beginPath();
+          ctx.arc(x + 44, y, 48, Math.PI, Math.PI * 2);
+          ctx.lineTo(x + 92, y);
+          ctx.lineTo(x, y);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(87, 213, 255, 0.42)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(x + 44, y, 31, Math.PI * 1.08, Math.PI * 1.92);
+          ctx.moveTo(x + 5, y - 16);
+          ctx.lineTo(x + 84, y - 16);
+          ctx.moveTo(x + 16, y - 34);
+          ctx.lineTo(x + 72, y - 34);
+          ctx.stroke();
+          ctx.fillStyle = '#6f8fa4';
+          ctx.beginPath();
+          ctx.arc(x + 44, y, 17, Math.PI, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.86)';
+        }
+      };
+
+      const drawDesertTemples = () => {
+        ctx.fillStyle = 'rgba(224, 173, 48, 0.7)';
+        for (let i = 0; i < 5; i += 1) {
+          const x = 34 + i * 184;
+          ctx.beginPath();
+          ctx.moveTo(x - 26, GROUND - 16);
+          ctx.lineTo(x + 46, GROUND - 154 - (i % 2) * 24);
+          ctx.lineTo(x + 118, GROUND - 16);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = 'rgba(120, 73, 33, 0.28)';
+          ctx.beginPath();
+          ctx.moveTo(x + 46, GROUND - 154 - (i % 2) * 24);
+          ctx.lineTo(x + 118, GROUND - 16);
+          ctx.lineTo(x + 58, GROUND - 16);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = 'rgba(224, 173, 48, 0.7)';
+        }
+        ctx.fillStyle = 'rgba(129, 78, 35, 0.72)';
+        for (let i = 0; i < 4; i += 1) {
+          const x = 96 + i * 230;
+          ctx.fillRect(x, GROUND - 92, 96, 92);
+          ctx.beginPath();
+          ctx.moveTo(x - 16, GROUND - 92);
+          ctx.lineTo(x + 48, GROUND - 142);
+          ctx.lineTo(x + 112, GROUND - 92);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = 'rgba(255, 247, 168, 0.46)';
+          ctx.fillRect(x + 36, GROUND - 58, 24, 58);
+          ctx.fillStyle = 'rgba(129, 78, 35, 0.72)';
+        }
+      };
+
       if (bossRoom) {
         drawBossLayout(game.room, time);
       } else if (shopRoom) {
         ctx.fillStyle = loc.hazard;
         for (const x of [170, 380, 590, 800]) {
-          ctx.fillRect(x, GROUND - 150, 24, 150);
-          ctx.fillRect(x - 34, GROUND - 154, 92, 12);
-          ctx.fillRect(x - 20, GROUND - 104, 64, 9);
+          ctx.fillRect(x, GROUND - 150, 18, 150);
+          ctx.beginPath();
+          ctx.roundRect(x - 42, GROUND - 158, 104, 16, 8);
+          ctx.roundRect(x - 28, GROUND - 108, 76, 11, 5);
+          ctx.fill();
+          ctx.strokeStyle = `${loc.accent}88`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(x - 34, GROUND - 150);
+          ctx.lineTo(x + 18, GROUND - 68);
+          ctx.lineTo(x + 54, GROUND - 150);
+          ctx.stroke();
         }
       } else if (baseLoc.decor === 'cranes') {
-        for (let i = 0; i < 4; i += 1) {
-          const x = 95 + i * 225 - ((time * 0.018) % 90);
-          ctx.fillRect(x, GROUND - 215, 10, 145);
-          ctx.fillRect(x - 44, GROUND - 218, 98, 8);
-          ctx.fillRect(x + 46, GROUND - 218, 5, 52);
-        }
+        drawRockRuins();
       } else if (baseLoc.decor === 'pipes') {
-        for (let i = 0; i < 6; i += 1) {
-          const x = 40 + i * 165;
-          ctx.fillRect(x, GROUND - 98 - (i % 2) * 24, 128, 14);
-          ctx.fillRect(x + 108, GROUND - 98 - (i % 2) * 24, 14, 64);
-        }
+        drawToxicCity();
       } else if (baseLoc.decor === 'snow') {
-        for (let i = 0; i < 8; i += 1) {
-          const x = 35 + i * 128 - ((time * 0.01) % 80);
-          ctx.beginPath();
-          ctx.moveTo(x, GROUND);
-          ctx.lineTo(x + 48, GROUND - 96 - (i % 3) * 20);
-          ctx.lineTo(x + 102, GROUND);
-          ctx.closePath();
-          ctx.fill();
-        }
+        drawIglooVillage();
         ctx.fillStyle = '#ffffff';
         ctx.globalAlpha = 0.72;
         for (let i = 0; i < 42; i += 1) {
@@ -1047,7 +1462,18 @@ export default function App() {
         }
         ctx.globalAlpha = 0.78;
         ctx.fillStyle = loc.hazard;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 7; i += 1) {
+          const x = 60 + i * 132;
+          ctx.beginPath();
+          ctx.moveTo(x, GROUND - 26);
+          ctx.lineTo(x + 34, GROUND - 42);
+          ctx.lineTo(x + 88, GROUND - 30);
+          ctx.stroke();
+        }
       } else if (baseLoc.decor === 'wind') {
+        drawDesertTemples();
         ctx.fillStyle = 'rgba(255, 247, 168, 0.55)';
         for (let i = 0; i < 6; i += 1) {
           const x = i * 188 - ((time * 0.006) % 188);
@@ -1134,27 +1560,49 @@ export default function App() {
         ctx.globalAlpha = 0.78;
         ctx.fillStyle = loc.hazard;
       } else {
-        for (let i = 0; i < 5; i += 1) {
-          const x = 90 + i * 176;
-          ctx.fillRect(x, GROUND - 190, 64, 32);
-          ctx.fillRect(x + 25, GROUND - 158, 9, 86);
-        }
+        drawCyberCity();
       }
       ctx.globalAlpha = 1;
 
-      ctx.fillStyle = loc.ground;
+      const groundGradient = ctx.createLinearGradient(0, GROUND, 0, HEIGHT);
+      groundGradient.addColorStop(0, loc.ground);
+      groundGradient.addColorStop(0.48, '#2d2926');
+      groundGradient.addColorStop(1, '#151313');
+      ctx.fillStyle = groundGradient;
       ctx.fillRect(0, GROUND, WIDTH, HEIGHT - GROUND);
-      ctx.fillStyle = '#191716';
-      ctx.fillRect(0, GROUND, WIDTH, 8);
-      ctx.fillStyle = '#2a2721';
-      for (let x = 0; x < WIDTH; x += 52) {
-        ctx.fillRect(x, GROUND + 31, 32, 7);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+      ctx.fillRect(0, GROUND, WIDTH, 3);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+      ctx.fillRect(0, GROUND + 6, WIDTH, 10);
+
+      ctx.strokeStyle = 'rgba(255, 243, 110, 0.18)';
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 8; i += 1) {
+        const x = (i * 143 + game.room * 17) % WIDTH;
+        const y = GROUND + 18 + (i % 4) * 23;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + 38, y + 8);
+        ctx.lineTo(x + 78, y - 2);
+        ctx.stroke();
       }
 
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+      for (let i = 0; i < 30; i += 1) {
+        const x = (i * 71 + game.room * 29) % WIDTH;
+        const y = GROUND + 18 + ((i * 19) % (HEIGHT - GROUND - 26));
+        const rock = 4 + (i % 5);
+        ctx.fillStyle = i % 3 === 0 ? 'rgba(255, 255, 255, 0.14)' : 'rgba(0, 0, 0, 0.26)';
+        ctx.beginPath();
+        ctx.ellipse(x, y, rock + 3, rock, 0.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
       const roomMarks = 5 + (game.room % 6);
       for (let i = 0; i < roomMarks; i += 1) {
-        ctx.fillRect(80 + i * 135, GROUND + 10 + (i % 2) * 28, 46, 3);
+        const x = 80 + i * 135;
+        ctx.fillRect(x, GROUND + 10 + (i % 2) * 28, 46, 3);
+        ctx.fillRect(x + 13, GROUND + 14 + (i % 2) * 28, 18, 2);
       }
 
       if (bossRoom) {
@@ -1174,6 +1622,129 @@ export default function App() {
         ctx.font = '900 28px Inter, system-ui, sans-serif';
         ctx.fillText(`SHOP ROOM ${displayRoom(game.room)}`, 34, GROUND - 305);
       }
+
+      const hasCorpseParts = game.corpseParts.heart && game.corpseParts.lung && game.corpseParts.brain;
+      const alchemistVisible = game.room === 6 || (game.zombies.length === 0 && hasCorpseParts);
+      if (alchemistVisible) {
+        const ax = 130;
+        const ay = GROUND - 76;
+        ctx.fillStyle = '#2a1b35';
+        ctx.fillRect(ax - 18, ay + 14, 36, 62);
+        ctx.fillStyle = '#d9b07a';
+        ctx.fillRect(ax - 12, ay - 10, 24, 24);
+        ctx.fillStyle = '#7f4bd8';
+        ctx.beginPath();
+        ctx.moveTo(ax, ay - 42);
+        ctx.lineTo(ax - 26, ay - 8);
+        ctx.lineTo(ax + 26, ay - 8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#57d5ff';
+        ctx.fillRect(ax - 6, ay + 30, 12, 16);
+        ctx.strokeStyle = '#80ff9e';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(ax + 19, ay + 28);
+        ctx.lineTo(ax + 44, ay + 2);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.58)';
+        ctx.fillRect(ax - 62, ay - 82, 176, 34);
+        ctx.fillStyle = '#f7f0df';
+        ctx.font = '800 13px Inter, system-ui, sans-serif';
+        ctx.fillText(hasCorpseParts ? 'Алхимик: E = Race V2' : 'Алхимик ищет 3 части', ax - 54, ay - 60);
+      }
+
+      const drawSecretRaceHint = (kind: 'cyborg' | 'ghoul' | 'dragon', label: string) => {
+        const x = 850;
+        const y = GROUND - 226;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.54)';
+        ctx.fillRect(x - 76, y - 92, 152, 36);
+        ctx.fillStyle = '#f7f0df';
+        ctx.font = '900 13px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x, y - 69);
+        ctx.textAlign = 'left';
+
+        if (kind === 'dragon') {
+          const dragonUnlocked = game.unlockedRaces.includes('dragon');
+          ctx.fillStyle = dragonUnlocked ? '#2f2117' : '#173044';
+          ctx.fillRect(x - 48, y - 22, 96, 58);
+          ctx.fillStyle = dragonUnlocked ? '#d88955' : '#d8f7ff';
+          ctx.beginPath();
+          ctx.moveTo(x - 50, y + 6);
+          ctx.lineTo(x - 18, y - 30);
+          ctx.lineTo(x + 40, y - 24);
+          ctx.lineTo(x + 58, y + 8);
+          ctx.lineTo(x + 34, y + 34);
+          ctx.lineTo(x - 28, y + 28);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = dragonUnlocked ? '#ffda67' : '#57d5ff';
+          ctx.beginPath();
+          ctx.moveTo(x - 18, y - 30);
+          ctx.lineTo(x - 32, y - 58);
+          ctx.lineTo(x + 2, y - 34);
+          ctx.moveTo(x + 18, y - 28);
+          ctx.lineTo(x + 36, y - 56);
+          ctx.lineTo(x + 38, y - 22);
+          ctx.fill();
+          ctx.strokeStyle = dragonUnlocked ? '#ffda67' : '#ffffff';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(x - 40, y + 2);
+          ctx.lineTo(x - 24, y + 18);
+          ctx.lineTo(x - 5, y + 4);
+          ctx.moveTo(x + 2, y - 18);
+          ctx.lineTo(x + 20, y - 2);
+          ctx.lineTo(x + 36, y - 18);
+          ctx.stroke();
+          ctx.fillStyle = dragonUnlocked ? '#101014' : '#1f5b73';
+          ctx.fillRect(x + 18, y - 4, 8, 7);
+          ctx.fillStyle = dragonUnlocked ? '#fff2a8' : '#ffffff';
+          ctx.fillRect(x - 38, y + 14, 38, 6);
+          if (!dragonUnlocked) {
+            ctx.fillStyle = 'rgba(216, 247, 255, 0.54)';
+            ctx.beginPath();
+            ctx.moveTo(x - 30, y + 38);
+            ctx.lineTo(x - 18, y + 68);
+            ctx.lineTo(x - 6, y + 38);
+            ctx.moveTo(x + 24, y + 34);
+            ctx.lineTo(x + 36, y + 64);
+            ctx.lineTo(x + 48, y + 34);
+            ctx.fill();
+          }
+        } else if (kind === 'cyborg') {
+          ctx.fillStyle = '#2b3034';
+          ctx.fillRect(x - 46, y - 34, 92, 72);
+          ctx.fillStyle = '#cbd4d8';
+          ctx.fillRect(x - 34, y - 22, 68, 48);
+          ctx.fillStyle = '#57d5ff';
+          ctx.fillRect(x - 24, y - 8, 16, 10);
+          ctx.fillRect(x + 8, y - 8, 16, 10);
+          ctx.fillRect(x - 20, y + 16, 40, 5);
+          ctx.strokeStyle = '#80ff9e';
+          ctx.lineWidth = 4;
+          ctx.strokeRect(x - 48, y - 36, 96, 76);
+        } else {
+          ctx.fillStyle = '#2a1a38';
+          ctx.fillRect(x - 46, y - 26, 92, 62);
+          ctx.fillStyle = '#c6b2ff';
+          ctx.fillRect(x - 32, y - 18, 64, 42);
+          ctx.fillStyle = '#ff304d';
+          ctx.fillRect(x - 20, y - 5, 10, 8);
+          ctx.fillRect(x + 10, y - 5, 10, 8);
+          ctx.fillStyle = '#101014';
+          ctx.fillRect(x - 16, y + 16, 32, 6);
+          ctx.fillStyle = '#6f46d8';
+          ctx.fillRect(x - 48, y + 30, 96, 12);
+        }
+        ctx.restore();
+      };
+
+      if (game.room === 5.5) drawSecretRaceHint('cyborg', 'СЕКРЕТ: КИБОРГ');
+      if (game.room === 10.5) drawSecretRaceHint('ghoul', 'СЕКРЕТ: ГУЛЬ');
+      if (game.room === 16) drawSecretRaceHint('dragon', 'СЕКРЕТ: ДРАКОН');
 
       if (game.room === 1) {
         const signX = 70;
@@ -1287,6 +1858,53 @@ export default function App() {
       ctx.restore();
     };
 
+    const drawAtmosphere = (time: number) => {
+      const game = gameRef.current;
+      const loc = chapterPalette(game.room);
+      const bossGlow = isBossRoom(game.room) || isAmbushBossRoom(game.room);
+      ctx.save();
+
+      const glow = ctx.createRadialGradient(WIDTH * 0.74, HEIGHT * 0.16, 20, WIDTH * 0.74, HEIGHT * 0.16, 430);
+      glow.addColorStop(0, bossGlow ? 'rgba(255, 58, 84, 0.24)' : 'rgba(255, 243, 110, 0.2)');
+      glow.addColorStop(0.38, `${loc.accent}22`);
+      glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.globalAlpha = 0.16;
+      ctx.fillStyle = loc.accent;
+      for (let i = 0; i < 34; i += 1) {
+        const x = (i * 89 + time * (0.012 + (i % 5) * 0.004)) % (WIDTH + 80) - 40;
+        const y = 40 + ((i * 47 + time * 0.011) % (GROUND - 70));
+        const size = 2 + (i % 4);
+        ctx.fillRect(x, y, size, size);
+      }
+
+      ctx.globalAlpha = 0.1;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 18;
+      for (let i = 0; i < 4; i += 1) {
+        const x = 120 + i * 240 + Math.sin(time * 0.0007 + i) * 28;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x - 96, GROUND);
+        ctx.stroke();
+      }
+
+      ctx.globalAlpha = 1;
+      const vignette = ctx.createRadialGradient(WIDTH / 2, HEIGHT / 2, 130, WIDTH / 2, HEIGHT / 2, 610);
+      vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+      vignette.addColorStop(0.66, 'rgba(0, 0, 0, 0.08)');
+      vignette.addColorStop(1, 'rgba(0, 0, 0, 0.54)');
+      ctx.fillStyle = vignette;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.globalAlpha = bossGlow ? 0.14 : 0.08;
+      ctx.fillStyle = bossGlow ? '#ff304d' : loc.accent;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+      ctx.restore();
+    };
+
     const drawCart = () => {
       const { player, cart } = gameRef.current;
       if (!hasCart(gameRef.current.room)) return;
@@ -1338,9 +1956,10 @@ export default function App() {
     };
 
     const drawPlayer = () => {
-      const { player, parryTimer, parryCooldown, parryColor, radiusLevel, activeSkin } = gameRef.current;
+      const { player, parryTimer, parryCooldown, parryColor, radiusLevel, activeSkin, activeRace } = gameRef.current;
       const skin = skins.find((item) => item.id === activeSkin);
-      const parryRadius = 48 + radiusLevel * 6;
+      const race = races.find((item) => item.id === activeRace) ?? races[0];
+      const parryRadius = 48 + radiusLevel * 6 + (activeRace === 'cyborg' ? 16 * racePower(gameRef.current.activeRaceVersion) : 0);
       const cx = player.x + PLAYER_W / 2;
       const running = Math.abs(player.vx) > 8 && player.y >= GROUND - PLAYER_H - 1 && !player.crouching;
       const step = running ? Math.sin(frame * 0.34) : 0;
@@ -1487,7 +2106,7 @@ export default function App() {
               ? '#f7f3df'
               : activeSkin === 'dio'
                 ? '#f5c842'
-                : '#5eb9d8';
+                : race.color;
       const legColor = activeSkin === 'giorno' ? '#6b4cc2' : activeSkin === 'pucci' ? '#202028' : activeSkin === 'dio' ? '#d2a72f' : '#141419';
       ctx.strokeStyle = armColor;
       ctx.lineWidth = 6;
@@ -1497,7 +2116,7 @@ export default function App() {
       ctx.moveTo(player.x + 32, player.y + 31);
       ctx.lineTo(player.x + 45, player.y + 39 - armSwing);
       ctx.stroke();
-      ctx.fillStyle = player.invuln > 0 ? '#ffeff8' : skin?.body ?? '#8fe0ff';
+      ctx.fillStyle = player.invuln > 0 ? '#ffeff8' : skin?.body ?? race.color;
       ctx.fillRect(player.x + 9, player.y + (player.crouching ? 34 : 18), 25, player.crouching ? 26 : 42);
       if (activeSkin === 'jotaro') {
         ctx.fillStyle = '#10142b';
@@ -1556,8 +2175,67 @@ export default function App() {
         ctx.fillRect(player.x + 2, player.y + 39 + armSwing, 8, 5);
         ctx.fillRect(player.x + 37, player.y + 38 - armSwing, 8, 5);
       }
-      ctx.fillStyle = '#f2c28f';
+      ctx.fillStyle = activeRace === 'fish' ? '#7ddcff' : activeRace === 'ghoul' ? '#c6b2ff' : activeRace === 'cyborg' ? '#cbd4d8' : activeRace === 'dragon' ? '#d88955' : '#f2c28f';
       ctx.fillRect(player.x + 10, player.y + (player.crouching ? 18 : 0), 24, 24);
+      if (activeRace === 'rabbit') {
+        ctx.fillStyle = '#f7f0df';
+        ctx.fillRect(player.x + 13, player.y + (player.crouching ? -8 : -25), 7, 24);
+        ctx.fillRect(player.x + 27, player.y + (player.crouching ? -8 : -25), 7, 24);
+        ctx.fillStyle = '#ffb6cf';
+        ctx.fillRect(player.x + 15, player.y + (player.crouching ? -4 : -21), 3, 16);
+        ctx.fillRect(player.x + 29, player.y + (player.crouching ? -4 : -21), 3, 16);
+      }
+      if (activeRace === 'angel') {
+        ctx.strokeStyle = '#fff36e';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.ellipse(player.x + 22, player.y + (player.crouching ? 9 : -11), 15, 5, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(247, 240, 223, 0.72)';
+        ctx.beginPath();
+        ctx.ellipse(player.x + 5, player.y + 31, 14, 25, -0.4, 0, Math.PI * 2);
+        ctx.ellipse(player.x + 40, player.y + 31, 14, 25, 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (activeRace === 'dragon') {
+        ctx.fillStyle = '#fff2a8';
+        ctx.beginPath();
+        ctx.moveTo(player.x + 12, player.y + (player.crouching ? 18 : 0));
+        ctx.lineTo(player.x + 5, player.y + (player.crouching ? 8 : -10));
+        ctx.lineTo(player.x + 19, player.y + (player.crouching ? 17 : -1));
+        ctx.moveTo(player.x + 32, player.y + (player.crouching ? 18 : 0));
+        ctx.lineTo(player.x + 39, player.y + (player.crouching ? 8 : -10));
+        ctx.lineTo(player.x + 25, player.y + (player.crouching ? 17 : -1));
+        ctx.fill();
+        ctx.strokeStyle = '#ff7a3d';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(player.x + 14, player.y + 62);
+        ctx.quadraticCurveTo(player.x - 12, player.y + 76, player.x - 5, player.y + 52);
+        ctx.stroke();
+      }
+      if (activeRace === 'fish') {
+        ctx.fillStyle = '#0f6f8f';
+        ctx.fillRect(player.x + 12, player.y + (player.crouching ? 27 : 9), 4, 3);
+        ctx.fillRect(player.x + 12, player.y + (player.crouching ? 33 : 15), 4, 3);
+        ctx.fillStyle = '#57d5ff';
+        ctx.beginPath();
+        ctx.moveTo(player.x + 22, player.y + (player.crouching ? 16 : -2));
+        ctx.lineTo(player.x + 12, player.y + (player.crouching ? 3 : -15));
+        ctx.lineTo(player.x + 32, player.y + (player.crouching ? 3 : -15));
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (activeRace === 'ghoul') {
+        ctx.fillStyle = '#ff304d';
+        ctx.fillRect(player.x + 27, player.y + (player.crouching ? 27 : 9), 6, 5);
+      }
+      if (activeRace === 'cyborg') {
+        ctx.fillStyle = '#57d5ff';
+        ctx.fillRect(player.x + 10, player.y + (player.crouching ? 27 : 9), 24, 5);
+        ctx.fillStyle = '#737b84';
+        ctx.fillRect(player.x + 34, player.y + (player.crouching ? 21 : 3), 5, 15);
+      }
       if (activeSkin === 'jotaro') {
         ctx.fillStyle = '#10142b';
         ctx.fillRect(player.x + 6, player.y + (player.crouching ? 11 : -7), 33, 12);
@@ -2856,11 +3534,11 @@ export default function App() {
           ctx.save();
           if (warning > 0) {
             ctx.globalAlpha = 0.24 + power * 0.56;
-            ctx.fillStyle = '#7f512c';
+            ctx.fillStyle = gameRef.current.room === 25 ? '#6d35d8' : '#7f512c';
             ctx.beginPath();
             ctx.ellipse(targetX, GROUND + 2, projectile.size + 12, 13, 0, 0, Math.PI * 2);
             ctx.fill();
-            ctx.strokeStyle = '#fff2a8';
+            ctx.strokeStyle = gameRef.current.room === 25 ? '#57d5ff' : '#fff2a8';
             ctx.lineWidth = 3;
             ctx.beginPath();
             ctx.arc(targetX, GROUND + 2, projectile.size + 8 + Math.sin(frame * 0.32) * 4, 0, Math.PI * 2);
@@ -2872,9 +3550,15 @@ export default function App() {
             const spray = Math.sin(frame * 0.25 + targetX) * 8;
             ctx.globalAlpha = 0.94;
             const gradient = ctx.createLinearGradient(targetX, GROUND, targetX, GROUND - height);
-            gradient.addColorStop(0, '#7f512c');
-            gradient.addColorStop(0.45, '#d4a657');
-            gradient.addColorStop(1, '#fff1a1');
+            if (gameRef.current.room === 25) {
+              gradient.addColorStop(0, '#3b176f');
+              gradient.addColorStop(0.45, '#8e4dff');
+              gradient.addColorStop(1, '#57d5ff');
+            } else {
+              gradient.addColorStop(0, '#7f512c');
+              gradient.addColorStop(0.45, '#d4a657');
+              gradient.addColorStop(1, '#fff1a1');
+            }
             ctx.fillStyle = gradient;
             ctx.beginPath();
             ctx.moveTo(targetX - projectile.size, GROUND);
@@ -2887,6 +3571,15 @@ export default function App() {
             ctx.ellipse(targetX, GROUND - height, projectile.size * 0.8, 12, 0, 0, Math.PI * 2);
             ctx.fill();
           }
+          ctx.restore();
+        } else if (projectile.kind === 'geyserStar') {
+          const warning = projectile.warning ?? 0;
+          const power = warning > 0 ? 0.35 : 1;
+          ctx.save();
+          ctx.globalAlpha = 0.45 + power * 0.45;
+          ctx.shadowColor = '#57d5ff';
+          ctx.shadowBlur = 16;
+          drawWarningStar(projectile.x, projectile.y, projectile.size + Math.sin(frame * 0.3) * 2, '#57d5ff');
           ctx.restore();
         } else if (projectile.kind === 'boulder') {
           const warning = projectile.warning ?? 0;
@@ -2942,7 +3635,7 @@ export default function App() {
     const fireShotgunParry = () => {
       const game = gameRef.current;
       if (!game.hasShotgun) return;
-      const winterParryDamageMultiplier = isSnowRoom(game.room) ? 0.5 : 1;
+      const winterParryDamageMultiplier = (isSnowRoom(game.room) ? 0.5 : 1) * (game.activeRace === 'human' ? 1 + 0.2 * racePower(game.activeRaceVersion) : 1);
       const originX = game.player.x + PLAYER_W / 2;
       const originY = game.player.y + 36;
       const facing = game.player.facing;
@@ -2993,6 +3686,7 @@ export default function App() {
       const originY = game.player.y + (game.player.crouching ? 48 : 37);
       const facing = game.player.facing;
       let hits = 0;
+      let flameQuestDamage = 0;
 
       game.flameTimer = 0.22;
       game.flameCooldown = 0.55;
@@ -3025,10 +3719,16 @@ export default function App() {
         if (forward < 8 || forward > flameReach || Math.abs(centerY - originY) > width) continue;
         hits += 1;
         const flameDamage =
-          zombie.kind === 'boss' ? (game.room === 20 || game.room === 20.5 ? 2 : 1) : isSnowRoom(game.room) ? 4 : 2;
+          (zombie.kind === 'boss' ? (game.room === 20 || game.room === 20.5 ? 2 : 1) : isSnowRoom(game.room) ? 4 : 2) *
+          (game.activeRace === 'dragon' ? 1 + 0.5 * racePower(game.activeRaceVersion) : 1);
         zombie.hp -= flameDamage;
+        flameQuestDamage += flameDamage;
         zombie.stunTimer = Math.max(zombie.stunTimer, zombie.kind === 'boss' ? 0.16 : 0.28);
         addSparks(centerX, centerY, '#ff8a3a', zombie.kind === 'boss' ? 12 : 18);
+      }
+      if (game.activeRace === 'dragon' && game.activeRaceVersion === 2 && flameQuestDamage > 0) {
+        game.raceQuestStats.dragonFlame += flameQuestDamage;
+        if (game.raceQuestStats.dragonFlame >= 25) completeRaceV3('dragon');
       }
 
       for (let i = 0; i < 24; i += 1) {
@@ -3137,6 +3837,28 @@ export default function App() {
       const keys = keysRef.current;
       const p = game.player;
       const inputX = (keys.left ? -1 : 0) + (keys.right ? 1 : 0);
+      const activeRace = game.activeRace;
+      const power = racePower(game.activeRaceVersion);
+      const takePlayerDamage = (damage: number) => {
+        const finalDamage = activeRace === 'fish' ? Math.max(1, damage - Math.ceil(power)) : damage;
+        p.hp -= finalDamage;
+        if (activeRace === 'fish' && game.activeRaceVersion === 2) {
+          game.raceQuestStats.fishDamage += Math.max(0, damage - finalDamage);
+          if (game.raceQuestStats.fishDamage >= 3) {
+            p.hp = 6;
+            completeRaceV3('fish');
+          }
+        }
+      };
+      const healPlayer = (amount: number) => {
+        const healed = Math.min(6 - p.hp, amount);
+        if (healed <= 0) return;
+        p.hp += healed;
+        if (activeRace === 'ghoul' && game.activeRaceVersion === 2) {
+          game.raceQuestStats.ghoulHealed += healed;
+          if (game.raceQuestStats.ghoulHealed >= 10) completeRaceV3('ghoul');
+        }
+      };
 
       if (game.paused) {
         return;
@@ -3164,7 +3886,7 @@ export default function App() {
       }
 
       const cartActive = hasCart(game.room);
-      const parryDamageMultiplier = isSnowRoom(game.room) ? 0.5 : 1;
+      const parryDamageMultiplier = (isSnowRoom(game.room) ? 0.5 : 1) * (activeRace === 'human' ? 1 + 0.2 * power : 1);
       const stopped = game.hitStop > 0;
       if (stopped) {
         game.hitStop = Math.max(0, game.hitStop - dt);
@@ -3180,12 +3902,29 @@ export default function App() {
 
       if (!stopped) {
         p.crouching = Boolean(keys.down && p.y >= GROUND - PLAYER_H - 1);
-        p.vx = inputX * (p.crouching ? 105 : 215);
+        const raceSpeed = activeRace === 'rabbit' ? 1 + 0.2 * power : activeRace === 'ghoul' ? 1 + 0.08 * power : 1;
+        p.vx = inputX * (p.crouching ? 105 : 215) * raceSpeed;
         if (inputX !== 0) p.facing = inputX;
-        if (!p.crouching && keys.jump && p.y >= GROUND - PLAYER_H - 1) p.vy = -430;
+        if (!p.crouching && keys.jump && p.y >= GROUND - PLAYER_H - 1) {
+          p.vy = activeRace === 'rabbit' ? -430 - 75 * power : activeRace === 'angel' ? -430 - 38 * power : -430;
+          if (activeRace === 'angel' && game.activeRaceVersion === 2) {
+            game.raceQuestStats.angelJumps += 1;
+            if (game.raceQuestStats.angelJumps >= 20) completeRaceV3('angel');
+          }
+        }
         p.vy += 1030 * dt;
         p.x = clamp(p.x + p.vx * dt, 20, WIDTH - 72);
         p.y = Math.min(GROUND - PLAYER_H, p.y + p.vy * dt);
+        if (activeRace === 'angel' && p.hp < 6 && p.invuln <= 0) {
+          game.raceRegenTimer += dt;
+          if (game.raceRegenTimer >= Math.max(3.8, 7 - power)) {
+            game.raceRegenTimer = 0;
+            p.hp = Math.min(6, p.hp + 1);
+            addSparks(p.x + PLAYER_W / 2, p.y + 24, '#fff36e', 18);
+          }
+        } else {
+          game.raceRegenTimer = 0;
+        }
 
         if (keys.flame) fireFlamethrower();
         if (cartActive) {
@@ -3203,6 +3942,16 @@ export default function App() {
 
       const playerAtPortal = rectsOverlap({ x: p.x, y: p.y, w: PLAYER_W, h: PLAYER_H }, { x: 810, y: GROUND - 170, w: 90, h: 160 });
       const cartAtPortal = !cartActive || rectsOverlap({ x: game.cart.x, y: game.cart.y - 22, w: 112, h: 70 }, { x: 800, y: GROUND - 170, w: 108, h: 160 });
+      const hasCorpseParts = game.corpseParts.heart && game.corpseParts.lung && game.corpseParts.brain;
+      const alchemistVisible = game.room === 6 || (game.zombies.length === 0 && hasCorpseParts);
+      const playerAtAlchemist = alchemistVisible && rectsOverlap({ x: p.x, y: p.y, w: PLAYER_W, h: PLAYER_H }, { x: 112, y: GROUND - 112, w: 70, h: 112 });
+      const playerAtDragonSecret = rectsOverlap({ x: p.x, y: p.y, w: PLAYER_W, h: PLAYER_H }, { x: 770, y: GROUND - 260, w: 160, h: 250 });
+      const dragonFlameActive = keys.flame || game.flameTimer > 0;
+      if (playerAtPortal && p.y < GROUND - PLAYER_H - 62) {
+        if (game.room === 5.5) unlockRace('cyborg');
+        if (game.room === 10.5) unlockRace('ghoul');
+      }
+      if (game.room === 16 && playerAtDragonSecret && dragonFlameActive) unlockRace('dragon');
       const onlyShootersLeft =
         isDioQuestRoom(game.room) &&
         game.zombies.some((zombie) => zombie.hp > 0 && zombie.kind === 'shooter') &&
@@ -3232,7 +3981,9 @@ export default function App() {
         game.messageTimer = 2.6;
         addSparks(boss.x + 52, boss.y - 16, '#ff263d', 90);
       }
-      if (keys.portal && playerAtPortal) {
+      if (keys.portal && playerAtAlchemist) {
+        upgradeRaceV2();
+      } else if (keys.portal && playerAtPortal) {
         if ((game.zombies.length === 0 || onlyShootersLeft) && cartAtPortal) {
           const dioQuestRoom = game.room;
           if (onlyShootersLeft) {
@@ -3506,6 +4257,11 @@ export default function App() {
           for (let i = 0; i < geyserCount; i += 1) {
             const offset = (i - (geyserCount - 1) / 2) * (wideBurst ? 78 : 66);
             const targetX = clamp(playerHitCenter.x + offset, 54, WIDTH - 54);
+            const starY = GROUND - 150;
+            const starDx = playerHitCenter.x - targetX;
+            const starDy = playerHitCenter.y - starY;
+            const starDistance = Math.hypot(starDx, starDy) || 1;
+            const starSpeed = wideBurst ? 210 : 180;
             game.projectiles.push({
               x: targetX,
               y: GROUND,
@@ -3522,11 +4278,26 @@ export default function App() {
               totalWarning: warning,
               activeDuration,
             });
+            if (i === Math.floor(geyserCount / 2)) {
+              game.projectiles.push({
+                x: targetX,
+                y: starY,
+                vx: (starDx / starDistance) * starSpeed,
+                vy: (starDy / starDistance) * starSpeed,
+                life: warning + 2.6,
+                damage: 0,
+                size: 15,
+                kind: 'geyserStar',
+                target: 'player',
+                warning: warning + 0.12,
+                totalWarning: warning + 0.12,
+              });
+            }
           }
           zombie.windupTimer = wideBurst ? 0.48 : 0.38;
           zombie.attackTarget = null;
           zombie.biteTimer = wideBurst ? 1.45 : 1.2;
-          game.message = wideBurst ? 'Песчаная буря: серия гейзеров!' : 'Песчаные гейзеры: смотри на круги.';
+          game.message = wideBurst ? 'Фиолетовая буря: парируй синюю звезду!' : 'Фиолетовый гейзер стреляет синей звездой.';
           game.messageTimer = 1.1;
         }
 
@@ -3538,7 +4309,7 @@ export default function App() {
         }
 
         const targetBox = zombie.attackTarget === 'cart' ? cartBox : playerBox;
-        const bonus = game.radiusLevel * 6;
+        const bonus = game.radiusLevel * 6 + (activeRace === 'cyborg' ? 16 * power : 0);
         const parryRange = { x: p.x - 54 - bonus, y: p.y - 8 - bonus, w: PLAYER_W + 108 + bonus * 2, h: PLAYER_H + 24 + bonus * 2 };
         if (zombie.kind === 'boss') {
           parryRange.x = p.x - 78 - bonus;
@@ -3566,6 +4337,7 @@ export default function App() {
           game.message = zombie.hp <= 0 ? 'ERROR PARRY: босс сломан' : 'ERROR PARRY: атаки возобновлены';
           game.messageTimer = 1;
           addSparks(zombie.x + 48, zombie.y + 18, game.parryColor, 64);
+          if (activeRace === 'ghoul') healPlayer(Math.ceil(power));
           fireShotgunParry();
         }
         const canParrySwing =
@@ -3588,6 +4360,7 @@ export default function App() {
           game.message = zombie.hp <= 0 ? (zombie.kind === 'boss' ? 'BOSS PARRIED TO DEATH' : 'PERFECT PARRY: zombie down') : zombie.kind === 'boss' ? 'BOSS PARRY' : 'PERFECT PARRY';
           game.messageTimer = 0.9;
           addSparks(zombie.x + (zombie.kind === 'boss' ? 52 : 24), zombie.y + 14, game.parryColor, zombie.kind === 'boss' ? 58 : 34);
+          if (activeRace === 'ghoul') healPlayer(Math.ceil(power));
           fireShotgunParry();
         }
 
@@ -3600,7 +4373,7 @@ export default function App() {
               game.messageTimer = 1.1;
               addSparks(game.cart.x + 60, game.cart.y + 14, '#ff6b4f', 18);
             } else if (zombie.attackTarget === 'player' && p.invuln <= 0) {
-              p.hp -= zombie.kind === 'boss' ? 2 : 1;
+              takePlayerDamage(zombie.kind === 'boss' ? 2 : 1);
               p.invuln = 0.8;
               p.x -= Math.sign(zombie.vx || 1) * 34;
               game.message = 'Попал удар. Жми F когда вспыхивает звезда.';
@@ -3614,7 +4387,7 @@ export default function App() {
         }
       }
 
-      const projectileParryBonus = game.radiusLevel * 3;
+      const projectileParryBonus = game.radiusLevel * 3 + (activeRace === 'cyborg' ? 10 * power : 0);
       const projectileParryBox = {
         x: p.x - 28 - projectileParryBonus,
         y: p.y + 8 - projectileParryBonus,
@@ -3639,6 +4412,7 @@ export default function App() {
           const isIceSpear = projectile.kind === 'iceSpear';
           const isIceSpike = projectile.kind === 'iceSpike';
           const isSandGeyser = projectile.kind === 'sandGeyser';
+          const isGeyserStar = projectile.kind === 'geyserStar';
           const activeX = isBoulder || isAcid || isIceSpike || isSandGeyser ? projectile.targetX ?? projectile.x : projectile.x;
           const activeY = isBoulder || isAcid || isIceSpike || isSandGeyser ? projectile.targetY ?? projectile.y : projectile.y;
           const acidDropBox = {
@@ -3684,7 +4458,7 @@ export default function App() {
             const beamBox = { x: 0, y: beamY - 8, w: WIDTH, h: 16 };
             const dodged = projectile.beamDirection === 'up' ? p.crouching : p.y < GROUND - PLAYER_H - 10;
             if (!dodged && rectsOverlap(playerBox, beamBox) && p.invuln <= 0) {
-              p.hp -= projectile.damage;
+              takePlayerDamage(projectile.damage);
               p.invuln = 0.75;
               addSparks(p.x + 22, p.y + 30, '#57d5ff', 24);
               game.message = projectile.beamDirection === 'up' ? 'Верхний луч надо приседать.' : 'Нижний луч надо перепрыгнуть.';
@@ -3711,7 +4485,7 @@ export default function App() {
           if (isIceSpike) {
             const jumped = p.y < GROUND - PLAYER_H - 10;
             if (!jumped && rectsOverlap(playerBox, projectileBox) && p.invuln <= 0) {
-              p.hp -= projectile.damage;
+              takePlayerDamage(projectile.damage);
               p.invuln = 0.65;
               addSparks(projectile.targetX ?? projectile.x, GROUND - 52, '#d8f7ff', 24);
               game.message = 'Шипы попали. Нужно подпрыгнуть на предупреждении.';
@@ -3723,7 +4497,7 @@ export default function App() {
           if (isSandGeyser) {
             const jumpedHigh = p.y < GROUND - PLAYER_H - 28;
             if (!jumpedHigh && rectsOverlap(playerBox, projectileBox) && p.invuln <= 0) {
-              p.hp -= projectile.damage;
+              takePlayerDamage(projectile.damage);
               p.invuln = 0.7;
               addSparks(projectile.targetX ?? projectile.x, GROUND - 68, '#d4a657', 28);
               game.message = 'Песчаный гейзер попал. Прыгай выше на предупреждении.';
@@ -3735,7 +4509,7 @@ export default function App() {
           if (
             game.parryTimer > 0 &&
             rectsOverlap(projectileParryBox, projectileBox) &&
-            (projectile.kind === 'star' || (projectile.kind === 'iceSpear' && projectile.spearParryable) || ((isBoulder || projectile.kind === 'acidStar') && (projectile.warning ?? 0) < 0.3))
+            (projectile.kind === 'star' || isGeyserStar || (projectile.kind === 'iceSpear' && projectile.spearParryable) || ((isBoulder || projectile.kind === 'acidStar') && (projectile.warning ?? 0) < 0.3))
           ) {
             if (isBoulder) {
               const golem = game.zombies.find((zombie) => zombie.kind === 'boss' && game.room === 5);
@@ -3773,6 +4547,18 @@ export default function App() {
               }
               addSparks(activeX, activeY, game.parryColor, 34);
               fireShotgunParry();
+            } else if (isGeyserStar) {
+              const sandBoss = game.zombies.find((zombie) => zombie.kind === 'boss' && game.room === 25);
+              if (sandBoss) {
+                sandBoss.hp -= 2 * parryDamageMultiplier;
+                sandBoss.stunTimer = 0.28;
+                addSparks(sandBoss.x + 52, sandBoss.y + 8, '#57d5ff', 44);
+                game.message = 'GEYSER STAR PARRY: звезда вернулась в босса';
+                game.messageTimer = 0.9;
+                game.hitStop = Math.max(game.hitStop, 0.07);
+              }
+              addSparks(activeX, activeY, '#57d5ff', 34);
+              fireShotgunParry();
             } else {
               explodeProjectile(projectile.x, projectile.y);
               fireShotgunParry();
@@ -3788,7 +4574,7 @@ export default function App() {
             addSparks(activeX, activeY, '#8b8172', 30);
             game.hitStop = Math.max(game.hitStop, 0.04);
             if (projectile.target !== 'cart' && rectsOverlap(playerBox, projectileBox) && p.invuln <= 0) {
-              p.hp -= projectile.damage;
+              takePlayerDamage(projectile.damage);
               p.invuln = 0.8;
               game.message = 'Булыжник попал. Можно было отойти или парировать тень.';
               game.messageTimer = 1.2;
@@ -3807,7 +4593,7 @@ export default function App() {
 
           if (isAcid && projectile.y < (projectile.targetY ?? GROUND)) {
             if (projectile.target !== 'cart' && rectsOverlap(playerBox, acidDropBox) && p.invuln <= 0) {
-              p.hp -= projectile.damage;
+                takePlayerDamage(projectile.damage);
               p.invuln = 0.55;
               addSparks(projectile.x, projectile.y, projectile.kind === 'acidStar' ? '#57d5ff' : '#80ff5c', 14);
               game.message = projectile.kind === 'acidStar' ? 'Синюю кислотную звезду можно парировать.' : 'Зеленая кислота не парируется.';
@@ -3827,7 +4613,7 @@ export default function App() {
           if (isAcid && projectile.y >= (projectile.targetY ?? GROUND)) {
             addSparks(activeX, activeY, projectile.kind === 'acidStar' ? '#57d5ff' : '#80ff5c', 20);
             if (projectile.target !== 'cart' && rectsOverlap(playerBox, acidDropBox) && p.invuln <= 0) {
-              p.hp -= projectile.damage;
+              takePlayerDamage(projectile.damage);
               p.invuln = 0.55;
               game.message = projectile.kind === 'acidStar' ? 'Синюю кислотную звезду можно парировать.' : 'Зеленая кислота не парируется.';
               game.messageTimer = 1;
@@ -3841,7 +4627,13 @@ export default function App() {
           }
 
           if (projectile.target !== 'cart' && rectsOverlap(playerBox, projectileBox) && p.invuln <= 0) {
-            p.hp -= projectile.damage;
+            if (isGeyserStar) {
+              addSparks(projectile.x, projectile.y, '#57d5ff', 18);
+              game.message = 'Синяя звезда не дамажит, но её можно парировать.';
+              game.messageTimer = 0.8;
+              return false;
+            }
+            takePlayerDamage(projectile.damage);
             p.invuln = 0.75;
             addSparks(projectile.x, projectile.y, isIceSpear ? '#d8f7ff' : '#ff5f6d', isIceSpear ? 22 : 16);
             game.message = isIceSpear
@@ -3854,6 +4646,12 @@ export default function App() {
           }
 
           if (cartActive && projectile.target !== 'player' && rectsOverlap(cartBox, projectileBox) && game.cart.invuln <= 0) {
+            if (isGeyserStar) {
+              addSparks(projectile.x, projectile.y, '#57d5ff', 18);
+              game.message = 'Синяя звезда прошла без урона.';
+              game.messageTimer = 0.8;
+              return false;
+            }
             game.cart.hp -= projectile.damage;
             game.cart.invuln = 0.65;
             addSparks(projectile.x, projectile.y, '#ff6b4f', 16);
@@ -3875,7 +4673,34 @@ export default function App() {
         return;
       }
 
+      for (const zombie of game.zombies) {
+        if (zombie.hp > 0 || zombie.corpsePartDropped) continue;
+        zombie.corpsePartDropped = true;
+        const dropPart = (part: keyof CorpseParts, label: string, color: string) => {
+          if (game.corpseParts[part]) return;
+          game.corpseParts[part] = true;
+          game.message = `Найдена часть зомби: ${label}.`;
+          game.messageTimer = 1.4;
+          addSparks(zombie.x + 28, zombie.y + 18, color, 34);
+          saveProgress(profileRef.current?.accountId ?? profileRef.current?.username, false);
+        };
+        if (zombie.kind === 'boss') {
+          dropPart('brain', 'желтый мозг', '#fff36e');
+        } else if (zombie.kind === 'shooter' && Math.random() < 0.5) {
+          dropPart('lung', 'синее легкое', '#57d5ff');
+        } else if (zombie.kind !== 'shooter' && Math.random() < 0.5) {
+          dropPart('heart', 'красное сердце', '#ff304d');
+        }
+      }
+
       game.zombies = game.zombies.filter((zombie) => zombie.hp > 0);
+      const clearedForHumanV3 = game.zombies.length === 0 && !isShopRoom(game.room) && game.activeRace === 'human' && game.activeRaceVersion === 2;
+      if (clearedForHumanV3) {
+        game.raceQuestStats.humanClearedTime += dt;
+        if (game.raceQuestStats.humanClearedTime >= 30) completeRaceV3('human');
+      } else if (game.activeRace === 'human' && game.activeRaceVersion === 2) {
+        game.raceQuestStats.humanClearedTime = 0;
+      }
       if (game.zombies.length === 0 && (!isShopRoom(game.room) || isAmbushBossRoom(game.room)) && (!isAmbushBossRoom(game.room) || (game.ambushTriggered && !game.ambushDefeated)) && game.messageTimer <= 0) {
         game.message = game.room >= FINAL_ROOM
           ? 'Финальный босс повержен. Заходи в портал.'
@@ -3888,6 +4713,13 @@ export default function App() {
         const reward = isBossRoom(game.room) || isAmbushBossRoom(game.room) ? 5 : 2;
         game.coins += reward;
         let dioUnlockedNow = false;
+        if ((isBossRoom(game.room) || isAmbushBossRoom(game.room)) && game.activeRace === 'cyborg' && game.activeRaceVersion === 2) {
+          game.raceQuestStats.cyborgBosses += 1;
+          if (game.raceQuestStats.cyborgBosses >= 2) {
+            completeRaceV3('cyborg');
+            dioUnlockedNow = true;
+          }
+        }
         if (game.room === FINAL_ROOM) {
           game.defeatedFinalBoss = true;
           const dioQuestComplete = [21, 22, 23, 24].every((room) => game.dioQuestRooms.includes(room));
@@ -3920,12 +4752,13 @@ export default function App() {
         game.player = { x: 170, y: GROUND - PLAYER_H, vx: 0, vy: 0, facing: 1, hp: 6, invuln: 0, crouching: false };
         game.cart = { x: 78, y: GROUND - 45, vx: 0, hp: 8, maxHp: 8, invuln: 0 };
         game.room = restartRoom;
-        game.location = (Math.floor(game.room) - 1) % locations.length;
+        game.location = chapterLocationIndex(game.room);
         game.won = false;
         game.paused = false;
         game.roomRewarded = false;
         game.flameTimer = 0;
         game.flameCooldown = 0;
+        game.raceRegenTimer = 0;
         game.snowCutscene = 'none';
         game.snowCutsceneTimer = 0;
         game.frostVictoryCutscene = 'none';
@@ -3987,6 +4820,7 @@ export default function App() {
       drawSparks();
       drawSnowCutscene();
       drawFrostVictoryCutscene();
+      drawAtmosphere(time);
       ctx.restore();
 
       if (zoomBoss) {
@@ -4066,6 +4900,12 @@ export default function App() {
         parryColor: game.parryColor,
         hasShotgun: game.hasShotgun,
         activeSkin: game.activeSkin,
+        activeRace: game.activeRace,
+        activeRaceVersion: game.activeRaceVersion,
+        raceVersions: game.raceVersions,
+        unlockedRaces: game.unlockedRaces,
+        corpseParts: game.corpseParts,
+        raceQuestStats: game.raceQuestStats,
         defeatedFinalBoss: game.defeatedFinalBoss,
         showHitboxes: game.showHitboxes,
         freezeMobs: game.freezeMobs,
@@ -4163,6 +5003,8 @@ export default function App() {
           <span>Goal: {hud.won ? 'finished' : `${Math.min(hud.room, FINAL_ROOM)}/${FINAL_ROOM}`}</span>
           <span>Parts: {hud.coins}</span>
           <span>Radius: +{hud.radiusLevel}</span>
+          <span>Race: {races.find((race) => race.id === hud.activeRace)?.name ?? 'Человек'} V{hud.activeRaceVersion}</span>
+          <span>Alchemy: {hud.corpseParts.heart ? 'H' : '-'}{hud.corpseParts.lung ? 'L' : '-'}{hud.corpseParts.brain ? 'B' : '-'}</span>
           <span>Shotgun: {hud.hasShotgun ? 'yes' : 'no'}</span>
         </div>
         <div className="panel-actions">
@@ -4237,89 +5079,140 @@ export default function App() {
       </aside>
 
       {menu !== 'closed' && (
-        <section className="menu-overlay">
-          <div className="menu-window">
+        <section className={menu === 'main' ? 'menu-overlay main-overlay' : 'menu-overlay'}>
+          <div className={menu === 'main' ? 'menu-window main-menu-window' : menu === 'shop' ? 'menu-window shop-menu-window' : 'menu-window'}>
             <div className="menu-title">
               <h2>{menu === 'shop' ? 'Shop' : 'Carry a Parry'}</h2>
               <span>{hud.coins} parts</span>
             </div>
 
             {menu === 'main' ? (
-              <>
-                <button type="button" onClick={startGame}>Start</button>
-                <button type="button" onClick={() => setMenu('shop')}>Shop</button>
-              </>
+              <div className="main-menu">
+                <div className="menu-art" aria-hidden="true">
+                  <span className="menu-sun" />
+                  <span className="menu-pyramid menu-pyramid-left" />
+                  <span className="menu-pyramid menu-pyramid-right" />
+                  <span className="menu-portal" />
+                  <span className="menu-player" />
+                  <span className="menu-enemy menu-enemy-one" />
+                  <span className="menu-enemy menu-enemy-two" />
+                  <span className="menu-ground" />
+                </div>
+                <div className="menu-copy">
+                  <strong>Sand Portals</strong>
+                  <span>Бей врагов, собирай parts и открывай новые расы в магазине.</span>
+                </div>
+                <div className="main-menu-actions">
+                  <button type="button" onClick={startGame}>Start</button>
+                  <button type="button" onClick={() => setMenu('shop')}>Shop</button>
+                </div>
+              </div>
             ) : (
-              <>
-	                <div className="shop-row">
-	                  <div>
-	                    <strong>Parry radius</strong>
-	                    <span>Level {hud.radiusLevel}/5</span>
-	                  </div>
-	                  <button type="button" onClick={buyRadius} disabled={gameRef.current.radiusLevel >= 5 || hud.coins < 4 + hud.radiusLevel * 3}>
-	                    {hud.radiusLevel >= 5 ? 'Max' : `${4 + hud.radiusLevel * 3} parts`}
-	                  </button>
-	                </div>
-		                {bossShopOpen && (
-		                  <>
-		                    <div className="shop-row">
-		                      <div>
-		                        <strong>Heal +3 HP</strong>
-		                        <span>Hero HP {hud.hp}/6</span>
-		                      </div>
-		                      <button type="button" onClick={buyHeal} disabled={hud.hp >= 6 || hud.coins < 6}>6 parts</button>
-		                    </div>
-			                    <div className="shop-row">
-			                      <div>
-			                        <strong>Shotgun</strong>
-			                        <span>{hud.hasShotgun ? 'Unlocked' : 'Close-range burst weapon'}</span>
-			                      </div>
-			                      <button type="button" onClick={buyShotgun} disabled={hud.hasShotgun || hud.coins < 40}>
-			                        {hud.hasShotgun ? 'Owned' : '40 parts'}
-			                      </button>
-			                    </div>
-			                  </>
-			                )}
-		                <div className="swatches">
-	                  {parryColors.map((item) => {
-                    const unlocked = gameRef.current.unlockedColors.includes(item.color);
+              <div className="shop-content">
+                <section className="shop-department">
+                  <h3>Hero</h3>
+                  <div className="shop-row race-row">
+                    <div>
+                      <strong>Race</strong>
+                      <span>V{hud.activeRaceVersion}: {races.find((race) => race.id === hud.activeRace)?.hint ?? 'классика'}</span>
+                    </div>
+                    <div className="race-grid">
+                      {races.map((race) => {
+                        const unlocked = hud.unlockedRaces.includes(race.id);
+                        return (
+                          <button
+                            key={race.id}
+                            type="button"
+                            className={hud.activeRace === race.id ? 'race-button active' : 'race-button'}
+                            style={{ borderColor: race.color }}
+                            onClick={() => chooseRace(race.id)}
+                            disabled={!unlocked}
+                          >
+                            {unlocked ? race.name : `${race.name} lock`}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <span>V2: сердце + легкое + мозг + 20 parts у алхимика.</span>
+                    {hud.activeRace === 'human' && hud.activeRaceVersion === 2 && (
+                      <span>Human V3: останься в зачищенной комнате {Math.floor(hud.raceQuestStats.humanClearedTime)}/30 сек.</span>
+                    )}
+                  </div>
+                  <div className="shop-row">
+                    <div>
+                      <strong>Parry radius</strong>
+                      <span>Level {hud.radiusLevel}/5</span>
+                    </div>
+                    <button type="button" onClick={buyRadius} disabled={gameRef.current.radiusLevel >= 5 || hud.coins < 4 + hud.radiusLevel * 3}>
+                      {hud.radiusLevel >= 5 ? 'Max' : `${4 + hud.radiusLevel * 3} parts`}
+                    </button>
+                  </div>
+                  <div className="swatches">
+                    {parryColors.map((item) => {
+                      const unlocked = gameRef.current.unlockedColors.includes(item.color);
+                      return (
+                        <button
+                          key={item.color}
+                          type="button"
+                          className={hud.parryColor === item.color ? 'swatch active' : 'swatch'}
+                          style={{ backgroundColor: item.color }}
+                          onClick={() => buyColor(item.color, item.cost)}
+                          disabled={!unlocked && hud.coins < item.cost}
+                          aria-label={`${item.name} parry color`}
+                        >
+                          <span>{unlocked ? item.name : `${item.cost}`}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+                <section className="shop-department">
+                  <h3>Gear</h3>
+                  {bossShopOpen && (
+                    <>
+                      <div className="shop-row">
+                        <div>
+                          <strong>Heal +3 HP</strong>
+                          <span>Hero HP {hud.hp}/6</span>
+                        </div>
+                        <button type="button" onClick={buyHeal} disabled={hud.hp >= 6 || hud.coins < 6}>6 parts</button>
+                      </div>
+                      <div className="shop-row">
+                        <div>
+                          <strong>Shotgun</strong>
+                          <span>{hud.hasShotgun ? 'Unlocked' : 'Close-range burst weapon'}</span>
+                        </div>
+                        <button type="button" onClick={buyShotgun} disabled={hud.hasShotgun || hud.coins < 40}>
+                          {hud.hasShotgun ? 'Owned' : '40 parts'}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {hud.defeatedFinalBoss && skins.map((skin) => {
+                    const unlocked = gameRef.current.unlockedSkins.includes(skin.id);
+                    const active = hud.activeSkin === skin.id;
+                    const questSkin = skin.id === 'dio' && !unlocked;
                     return (
-                      <button
-                        key={item.color}
-                        type="button"
-                        className={hud.parryColor === item.color ? 'swatch active' : 'swatch'}
-                        style={{ backgroundColor: item.color }}
-                        onClick={() => buyColor(item.color, item.cost)}
-                        disabled={!unlocked && hud.coins < item.cost}
-                        aria-label={`${item.name} parry color`}
-                      >
-                        <span>{unlocked ? item.name : `${item.cost}`}</span>
-                      </button>
+                      <div className="shop-row" key={skin.id}>
+                        <div>
+                          <strong>{skin.name}</strong>
+                          <span>{skin.stand}</span>
+                        </div>
+                        <button type="button" onClick={() => buySkin(skin.id, skin.cost)} disabled={!unlocked && (questSkin || hud.coins < skin.cost)}>
+                          {active ? 'Equipped' : unlocked ? 'Equip' : questSkin ? 'Quest' : `${skin.cost} parts`}
+                        </button>
+                      </div>
                     );
-	                  })}
-	                </div>
-	                {hud.defeatedFinalBoss && (
-	                  <>
-		                    {skins.map((skin) => {
-		                      const unlocked = gameRef.current.unlockedSkins.includes(skin.id);
-		                      const active = hud.activeSkin === skin.id;
-		                      const questSkin = skin.id === 'dio' && !unlocked;
-		                      return (
-		                        <div className="shop-row" key={skin.id}>
-	                          <div>
-	                            <strong>{skin.name}</strong>
-	                            <span>{skin.stand}</span>
-	                          </div>
-		                          <button type="button" onClick={() => buySkin(skin.id, skin.cost)} disabled={!unlocked && (questSkin || hud.coins < skin.cost)}>
-		                            {active ? 'Equipped' : unlocked ? 'Equip' : questSkin ? 'Quest' : `${skin.cost} parts`}
-		                          </button>
-	                        </div>
-	                      );
-	                    })}
-	                  </>
-	                )}
-	                <button type="button" className="ghost" onClick={() => setMenu('main')}>Back</button>
-              </>
+                  })}
+                  {!bossShopOpen && !hud.defeatedFinalBoss && (
+                    <div className="shop-empty">
+                      <strong>Gear locked</strong>
+                      <span>Боевые покупки появляются в shop-room.</span>
+                    </div>
+                  )}
+                  <button type="button" className="ghost" onClick={() => setMenu('main')}>Back</button>
+                </section>
+              </div>
             )}
           </div>
         </section>
